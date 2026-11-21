@@ -46,6 +46,7 @@ export type ServerTab =
 interface ServerDetailProps {
   snapshot: ServerSnapshot;
   initialTab?: ServerTab;
+  onTabChange?: (tab: ServerTab) => void;
   onRefreshSnapshot: () => void;
   onServerUpdated: (server: ServerConfig) => void;
   onServerDeleted: () => void;
@@ -66,6 +67,7 @@ const TABS: { id: ServerTab; label: string; icon: React.ComponentType<{ classNam
 export const ServerDetail: React.FC<ServerDetailProps> = ({
   snapshot,
   initialTab = 'overview',
+  onTabChange,
   onRefreshSnapshot,
   onServerUpdated,
   onServerDeleted,
@@ -91,10 +93,21 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
   const [savingMeta, setSavingMeta] = useState(false);
   const esRef = useRef<EventSource | null>(null);
 
+  const switchTab = (tab: ServerTab) => {
+    setActiveTab(tab);
+    onTabChange?.(tab);
+  };
+
   useEffect(() => {
     setActiveTab(initialTab);
-    setTerminalContainer(null);
+    if (initialTab !== 'terminal') {
+      setTerminalContainer(null);
+    }
   }, [initialTab, snapshot.server.id]);
+
+  useEffect(() => {
+    setTerminalContainer(null);
+  }, [snapshot.server.id]);
 
   useEffect(() => {
     setMetaForm({
@@ -181,7 +194,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
 
   const jumpToFolder = (dirPath: string) => {
     setFileInitialPath(dirPath);
-    setActiveTab('files');
+    switchTab('files');
   };
 
   const sshCmd = `ssh ${snapshot.server.username}@${snapshot.tailscaleIp || snapshot.publicIp || snapshot.server.host}${snapshot.server.port !== 22 ? ` -p ${snapshot.server.port}` : ''}`;
@@ -295,7 +308,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
               return (
                 <button
                   key={t.id}
-                  onClick={() => setActiveTab(t.id)}
+                  onClick={() => switchTab(t.id)}
                   className={`flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-medium border-b-2 whitespace-nowrap transition-colors cursor-pointer ${
                     isActive
                       ? 'border-sky-400 text-sky-300'
@@ -333,7 +346,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                 snapshot={snapshot}
                 metrics={liveMetrics}
                 history={history}
-                onNavigateTab={setActiveTab}
+                onNavigateTab={switchTab}
                 onJumpFolder={jumpToFolder}
                 onServerUpdated={onServerUpdated}
               />
@@ -346,7 +359,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                 onRefreshSnapshot={onRefreshSnapshot}
                 onOpenContainerTerminal={(name) => {
                   setTerminalContainer(name);
-                  setActiveTab('terminal');
+                  switchTab('terminal');
                 }}
               />
             )}

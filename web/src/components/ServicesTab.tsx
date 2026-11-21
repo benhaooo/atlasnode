@@ -22,7 +22,6 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import type { DockerContainer, ProxyRoute, ServerConfig, ServerSnapshot, SystemdService } from '../types';
-import { ProxyRoutesSkeleton } from './Skeleton';
 
 interface ServicesTabProps {
   snapshot: ServerSnapshot;
@@ -277,8 +276,8 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Reverse Proxy Domains & TLS Certificate Topology */}
-      {(proxyRoutes.length > 0 || loadingProxies) && (
+      {/* Reverse Proxy Domains & TLS Certificate Topology (shown only when routes exist) */}
+      {proxyRoutes.length > 0 && (
         <section className="space-y-2.5">
           <div className="flex items-center justify-between">
             <div className="text-xs font-semibold uppercase tracking-wider text-emerald-300 flex items-center gap-1.5">
@@ -294,11 +293,8 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
               <span>刷新域名与证书</span>
             </button>
           </div>
-          {loadingProxies && proxyRoutes.length === 0 ? (
-            <ProxyRoutesSkeleton />
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-              {proxyRoutes.map((route, idx) => {
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {proxyRoutes.map((route, idx) => {
                 const days = route.tlsDaysLeft;
                 const certColor =
                   days === null || days === undefined
@@ -351,7 +347,6 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                 );
               })}
             </div>
-          )}
         </section>
       )}
 

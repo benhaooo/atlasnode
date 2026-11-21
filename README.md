@@ -1,6 +1,19 @@
-# AtlasNode
+<p align="center">
+  <img src="web/public/favicon.svg" width="84" height="84" alt="AtlasNode Logo" />
+</p>
 
-轻量级、无 Agent 的多服务器态势与运维管理中枢。前端使用 React + TailwindCSS，后端采用 **纯 Go 静态单文件**（`CGO_ENABLED=0`，`//go:embed` 内嵌前端，内建纯 Go SQLite、SSH 连接池与原生 PTY），编译后单个 ~14MB 二进制即可在任意 Linux 主机零依赖运行。
+<h1 align="center">AtlasNode</h1>
+
+<p align="center">
+  轻量级、无 Agent 的多服务器态势与运维管理中枢（纯 Go 单文件 + React）
+</p>
+
+<p align="center">
+  <a href="https://github.com/benhaooo/atlasnode/actions/workflows/ci.yml"><img src="https://github.com/benhaooo/atlasnode/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/benhaooo/atlasnode/releases"><img src="https://img.shields.io/github/v/release/benhaooo/atlasnode?include_prereleases&label=Release" alt="Release" /></a>
+</p>
+
+前端使用 React + TailwindCSS，后端采用 **纯 Go 静态单文件**（`CGO_ENABLED=0`，`//go:embed` 内嵌前端，内建纯 Go SQLite、SSH 连接池与原生 PTY），编译后单个 ~14MB 二进制即可在任意 Linux 主机零依赖运行。
 
 ## 核心特性
 

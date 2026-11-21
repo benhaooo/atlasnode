@@ -3,7 +3,6 @@ import {
   GitCompareArrows,
   LayoutGrid,
   Plus,
-  Server,
   Settings,
   LogOut,
   RefreshCw,
@@ -13,6 +12,7 @@ import {
 } from 'lucide-react';
 import type { ServerSnapshot } from '../types';
 import { serverFlag } from '../utils';
+import { BrandLogo } from './BrandLogo';
 
 interface SidebarProps {
   snapshots: ServerSnapshot[];
@@ -51,9 +51,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           onClick={onSelectOverview}
           className="flex items-center gap-2.5 text-left group cursor-pointer"
         >
-          <div className="w-7 h-7 rounded-lg bg-sky-500/15 border border-sky-400/30 flex items-center justify-center group-hover:bg-sky-500/25 transition-colors">
-            <Server className="w-4 h-4 text-sky-400" />
-          </div>
+          <BrandLogo className="w-7 h-7 shrink-0 group-hover:scale-105 transition-transform" />
           <div>
             <div className="text-sm font-semibold text-white tracking-tight leading-none">AtlasNode</div>
             <div className="text-[10px] text-slate-500 mt-1 font-mono">

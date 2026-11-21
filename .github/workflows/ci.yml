@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go-server/go.mod
+          cache-dependency-path: go-server/go.sum
+
+      - name: Build React frontend & embed
+        run: |
+          npm --prefix web ci
+          npm --prefix web run build
+          rm -rf go-server/webdist
+          mkdir -p go-server/webdist
+          cp -R web/dist/. go-server/webdist/
+
+      - name: Test & Vet Go backend
+        working-directory: go-server
+        run: |
+          go vet ./...
+          go test -v ./...
+
+      - name: Verify Linux amd64 & arm64 static builds
+        working-directory: go-server
+        run: |
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/atlasnode-linux-amd64 .
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/atlasnode-linux-arm64 .
+          ls -lh dist/

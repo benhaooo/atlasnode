@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import type { FirewallData, ServerSnapshot } from '../types';
+import { FirewallSkeleton } from './Skeleton';
 
 interface FirewallTabProps {
   snapshot: ServerSnapshot;
@@ -154,7 +155,7 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
   };
 
   if (loading && !data) {
-    return <div className="h-64 rounded-2xl bg-[#0f131b] border border-white/[0.06] animate-pulse" />;
+    return <FirewallSkeleton />;
   }
 
   const publicPorts = data?.listeningPorts.filter((p) => p.scope === 'public') || [];

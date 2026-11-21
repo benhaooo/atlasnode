@@ -36,6 +36,7 @@ import type {
   ServerSnapshot,
 } from '../types';
 import { formatBytes } from '../utils';
+import { NetworkChartSkeleton, NetworkLiveTcpSkeleton, Sk } from './Skeleton';
 
 interface PresetCategory {
   id: string;
@@ -1023,10 +1024,7 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
         </div>
 
         {loadingMon && !monitor ? (
-          <div className="h-60 rounded-xl bg-[#090b10] border border-white/[0.05] flex flex-col items-center justify-center gap-2.5 text-xs text-slate-400">
-            <Loader2 className="w-5 h-5 animate-spin text-sky-400" />
-            <span>正在加载线路延迟与晚高峰历史曲线...</span>
-          </div>
+          <NetworkChartSkeleton />
         ) : !chartData ? (
           <div className="h-52 rounded-xl bg-[#090b10] border border-dashed border-white/10 flex flex-col items-center justify-center gap-2 text-xs text-slate-500">
             <span>当前时间窗口内暂无探针历史数据</span>
@@ -1192,10 +1190,7 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
           </div>
 
           {loadingTcp && !liveTcp ? (
-            <div className="h-44 rounded-xl bg-[#090b10] flex items-center justify-center gap-2 text-xs text-slate-400">
-              <Loader2 className="w-4 h-4 animate-spin text-sky-400" />
-              <span>正在读取活跃 TCP 连接内核指标...</span>
-            </div>
+            <NetworkLiveTcpSkeleton />
           ) : !liveTcp || (liveTcp.ports.length === 0 && liveTcp.topPeers.length === 0) ? (
             <div className="h-36 rounded-xl bg-[#090b10] border border-dashed border-white/10 flex flex-col items-center justify-center text-xs text-slate-500 px-4 text-center">
               <span>当前暂无外部活跃 TCP 连接</span>
@@ -1418,7 +1413,24 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
           </div>
 
           {!profile ? (
-            <div className="h-40 rounded-xl bg-[#090b10] animate-pulse" />
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2.5">
+                {[0, 1, 2, 3].map((i) => (
+                  <div key={i} className="bg-[#090b10] border border-white/[0.05] rounded-xl p-3 space-y-2">
+                    <Sk className="h-2.5 w-20 bg-white/[0.04]" />
+                    <Sk className="h-4 w-24" />
+                  </div>
+                ))}
+              </div>
+              <div className="bg-[#090b10] border border-white/[0.05] rounded-xl p-3.5 space-y-2">
+                <Sk className="h-3 w-32 bg-white/[0.05]" />
+                <div className="flex gap-2">
+                  <Sk className="h-5 w-16 rounded-lg bg-white/[0.05]" />
+                  <Sk className="h-5 w-20 rounded-lg bg-white/[0.05]" />
+                  <Sk className="h-5 w-14 rounded-lg bg-white/[0.05]" />
+                </div>
+              </div>
+            </div>
           ) : (
             <div className="space-y-4 text-xs">
               <div className="grid grid-cols-2 gap-2.5">
@@ -1497,7 +1509,24 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
           </h3>
 
           {!profile ? (
-            <div className="h-40 rounded-xl bg-[#090b10] animate-pulse" />
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2.5">
+                {[0, 1, 2, 3].map((i) => (
+                  <div key={i} className="bg-[#090b10] border border-white/[0.05] rounded-xl p-3 space-y-2">
+                    <Sk className="h-2.5 w-20 bg-white/[0.04]" />
+                    <Sk className="h-4 w-24" />
+                  </div>
+                ))}
+              </div>
+              <div className="bg-[#090b10] border border-white/[0.05] rounded-xl p-3.5 space-y-2">
+                <Sk className="h-3 w-32 bg-white/[0.05]" />
+                <div className="flex gap-2">
+                  <Sk className="h-5 w-16 rounded-lg bg-white/[0.05]" />
+                  <Sk className="h-5 w-20 rounded-lg bg-white/[0.05]" />
+                  <Sk className="h-5 w-14 rounded-lg bg-white/[0.05]" />
+                </div>
+              </div>
+            </div>
           ) : (
             <div className="space-y-2">
               {profile.interfaces.map((nic) => (

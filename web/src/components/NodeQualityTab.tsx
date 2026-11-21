@@ -26,6 +26,7 @@ import {
 import { api } from '../api';
 import type { NodeQualityMode, NodeQualityRun, ServerSnapshot } from '../types';
 import { countryFlag, formatDateTime, formatRelativeTime } from '../utils';
+import { NodeQualitySkeleton } from './Skeleton';
 
 interface NodeQualityTabProps {
   snapshot: ServerSnapshot;
@@ -472,10 +473,7 @@ export const NodeQualityTab: React.FC<NodeQualityTabProps> = ({ snapshot, onRefr
 
       {/* Main Visual Report */}
       {loading && !selectedRun ? (
-        <div className="h-64 rounded-2xl bg-[#0f131b] border border-white/[0.06] flex flex-col items-center justify-center gap-2.5 text-xs text-slate-400">
-          <Loader2 className="w-5 h-5 animate-spin text-sky-400" />
-          <span>正在加载 NodeQuality 质检报告...</span>
-        </div>
+        <NodeQualitySkeleton />
       ) : !selectedRun || !summary ? (
         <div className="bg-[#0f131b] border border-dashed border-white/10 rounded-2xl p-12 text-center space-y-3">
           <Zap className="w-8 h-8 text-slate-600 mx-auto" />

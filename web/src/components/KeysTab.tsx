@@ -15,6 +15,7 @@ import {
 import { api } from '../api';
 import type { ServerSnapshot, SshSecurityInfo } from '../types';
 import { copyToClipboard } from '../utils';
+import { KeysSkeleton } from './Skeleton';
 
 interface KeysTabProps {
   snapshot: ServerSnapshot;
@@ -112,7 +113,7 @@ export const KeysTab: React.FC<KeysTabProps> = ({ snapshot }) => {
   };
 
   if (loading && !info) {
-    return <div className="h-64 rounded-2xl bg-[#0f131b] border border-white/[0.06] animate-pulse" />;
+    return <KeysSkeleton />;
   }
 
   return (

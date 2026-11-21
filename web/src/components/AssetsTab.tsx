@@ -12,6 +12,7 @@ import {
 import { api } from '../api';
 import type { DiskAuditData, ServerSnapshot } from '../types';
 import { formatBytes } from '../utils';
+import { AssetsSkeleton } from './Skeleton';
 
 interface AssetsTabProps {
   snapshot: ServerSnapshot;
@@ -100,10 +101,7 @@ export const AssetsTab: React.FC<AssetsTabProps> = ({
       )}
 
       {loading && !data ? (
-        <div className="h-64 rounded-2xl bg-[#0f131b] border border-white/[0.06] flex items-center justify-center text-xs text-slate-400 gap-2">
-          <Loader2 className="w-4 h-4 animate-spin text-sky-400" />
-          <span>正在扫描大目录、Docker 占用与定时任务...</span>
-        </div>
+        <AssetsSkeleton />
       ) : data ? (
         <div className="space-y-5">
           {/* Row 1: Top Large Directories (7 cols) + Docker Space Breakdown (5 cols) */}

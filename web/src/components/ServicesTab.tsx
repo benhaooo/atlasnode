@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import type { DockerContainer, ProxyRoute, ServerConfig, ServerSnapshot, SystemdService } from '../types';
+import { ProxyRoutesSkeleton } from './Skeleton';
 
 interface ServicesTabProps {
   snapshot: ServerSnapshot;
@@ -294,10 +295,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
             </button>
           </div>
           {loadingProxies && proxyRoutes.length === 0 ? (
-            <div className="bg-[#0f131b] border border-white/[0.06] rounded-xl p-4 text-xs text-slate-500 flex items-center gap-2">
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-400" />
-              <span>正在扫描 Caddy / Nginx / Cloudflared 反代规则与 TLS 证书有效期...</span>
-            </div>
+            <ProxyRoutesSkeleton />
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {proxyRoutes.map((route, idx) => {

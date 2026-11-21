@@ -18,6 +18,7 @@ import {
 import { api } from '../api';
 import type { FileEntry, ServerSnapshot } from '../types';
 import { formatBytes, formatDateTime } from '../utils';
+import { FileListSkeleton } from './Skeleton';
 
 interface FilesTabProps {
   snapshot: ServerSnapshot;
@@ -333,12 +334,7 @@ export const FilesTab: React.FC<FilesTabProps> = ({ snapshot, initialPath = '/' 
             );
           })}
 
-          {loading && entries.length === 0 && (
-            <div className="py-12 flex items-center justify-center gap-2 text-xs text-slate-400">
-              <Loader2 className="w-4 h-4 animate-spin text-sky-400" />
-              <span>正在读取目录...</span>
-            </div>
-          )}
+          {loading && entries.length === 0 && <FileListSkeleton />}
 
           {!loading && filteredEntries.length === 0 && (
             <div className="py-12 text-center text-xs text-slate-500">目录为空</div>

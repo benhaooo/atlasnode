@@ -30,6 +30,7 @@ import {
   usageBarColor,
   usageTextColor,
 } from '../utils';
+import { FleetSkeleton } from './Skeleton';
 
 interface FleetOverviewProps {
   snapshots: ServerSnapshot[];
@@ -178,14 +179,7 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
 
       {/* Server Dossiers — Weighted Horizontal Cards */}
       {loading && snapshots.length === 0 ? (
-        <div className="space-y-4">
-          {[1, 2, 3].map((n) => (
-            <div
-              key={n}
-              className="h-44 rounded-2xl bg-[#0f131b] border border-white/[0.06] animate-pulse"
-            />
-          ))}
-        </div>
+        <FleetSkeleton />
       ) : (
         <div className="space-y-4">
           {snapshots.map((snap) => {

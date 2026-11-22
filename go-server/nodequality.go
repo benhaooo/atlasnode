@@ -635,6 +635,9 @@ func startAutoNodeQualityScheduler() {
 					if !loadAutoNQConfig().Enabled {
 						return
 					}
+					if !srv.IsProxyEnabled() {
+						continue
+					}
 					if getActiveNodeQualityJob(srv.ID) != nil {
 						continue
 					}

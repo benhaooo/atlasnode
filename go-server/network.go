@@ -948,6 +948,9 @@ func startNetworkProbeSampler(interval time.Duration) {
 			now := time.Now()
 			var wg sync.WaitGroup
 			for _, srv := range servers {
+				if !srv.IsProxyEnabled() {
+					continue
+				}
 				modeCfg := getServerNetworkMode(srv.ID)
 				if modeCfg.Mode == "off" {
 					continue

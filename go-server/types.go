@@ -1,5 +1,7 @@
 package main
 
+import "strings"
+
 type JumpHostConfig struct {
 	Host     string `json:"host"`
 	Port     int    `json:"port,omitempty"`
@@ -39,10 +41,24 @@ type ServerConfig struct {
 	UseSudo     bool            `json:"useSudo"`
 	PublicIP    string          `json:"publicIp,omitempty"`
 	TailscaleIP string          `json:"tailscaleIp,omitempty"`
-	JumpHost    *JumpHostConfig `json:"jumpHost,omitempty"`
-	QuickLinks  []QuickLink     `json:"quickLinks"`
-	TrafficPlan *TrafficPlan    `json:"trafficPlan,omitempty"`
-	CreatedAt   string          `json:"createdAt"`
+	JumpHost     *JumpHostConfig `json:"jumpHost,omitempty"`
+	QuickLinks   []QuickLink     `json:"quickLinks"`
+	TrafficPlan  *TrafficPlan    `json:"trafficPlan,omitempty"`
+	ProxyEnabled *bool           `json:"proxyEnabled,omitempty"`
+	CreatedAt    string          `json:"createdAt"`
+}
+
+func (s ServerConfig) IsProxyEnabled() bool {
+	if s.ProxyEnabled != nil {
+		return *s.ProxyEnabled
+	}
+	hay := strings.ToLower(s.ID + " " + s.Name + " " + s.Role + " " + strings.Join(s.Tags, " "))
+	for _, kw := range []string{"proxy", "代理", "落地", "中转", "vpn", "xray", "sing-box", "hysteria", "vless", "trojan"} {
+		if strings.Contains(hay, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 type ProcessMetric struct {

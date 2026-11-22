@@ -28,6 +28,7 @@ export const AddServerModal: React.FC<AddServerModalProps> = ({
     port: 22,
     username: 'root',
     useSudo: false,
+    proxyEnabled: false,
     publicIp: '',
     tailscaleIp: '',
     jumpServerId: '',
@@ -59,6 +60,7 @@ export const AddServerModal: React.FC<AddServerModalProps> = ({
       port: 22,
       username: 'root',
       useSudo: false,
+      proxyEnabled: /proxy|代理|落地|中转/i.test(peer.hostName),
       publicIp: '',
       tailscaleIp: peer.tailscaleIp,
       jumpServerId: defaultJump?.id || '',
@@ -78,6 +80,7 @@ export const AddServerModal: React.FC<AddServerModalProps> = ({
       port: Number(form.port) || 22,
       username: form.username.trim() || 'root',
       useSudo: form.useSudo,
+      proxyEnabled: form.proxyEnabled,
       publicIp: form.publicIp.trim() || undefined,
       tailscaleIp: form.tailscaleIp.trim() || undefined,
       jumpHost: jumpServer
@@ -303,7 +306,22 @@ export const AddServerModal: React.FC<AddServerModalProps> = ({
                   onChange={(e) => setForm({ ...form, useSudo: e.target.checked })}
                   className="rounded accent-sky-500"
                 />
-                <span>非 root 用户，自动使用 sudo -n 执行特权操作（防火墙/文件/NodeQuality）</span>
+                <span>非 root 用户，自动使用 sudo -n 执行特权操作（防火墙/文件/质检）</span>
+              </label>
+
+              <label className="flex items-start gap-2 text-slate-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.proxyEnabled}
+                  onChange={(e) => setForm({ ...form, proxyEnabled: e.target.checked })}
+                  className="rounded accent-emerald-500 mt-0.5"
+                />
+                <span>
+                  附加<strong className="text-emerald-300 font-medium">代理节点能力</strong>
+                  <span className="block text-[10px] text-slate-500 mt-0.5">
+                    开启后展示「线路与质检」页签，启用晚高峰波动监测、IP 纯净度与 AI/流媒体解锁评估
+                  </span>
+                </span>
               </label>
 
               {managerKey && (

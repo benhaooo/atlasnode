@@ -36,6 +36,20 @@ export function billingModeLabel(mode?: string): string {
   }
 }
 
+const PROXY_KEYWORDS = ['proxy', '代理', '落地', '中转', 'vpn', 'xray', 'sing-box', 'hysteria', 'vless', 'trojan'];
+
+export function isProxyServer(server: {
+  id: string;
+  name: string;
+  role?: string;
+  tags?: string[];
+  proxyEnabled?: boolean;
+}): boolean {
+  if (typeof server.proxyEnabled === 'boolean') return server.proxyEnabled;
+  const hay = `${server.id} ${server.name} ${server.role || ''} ${(server.tags || []).join(' ')}`.toLowerCase();
+  return PROXY_KEYWORDS.some((kw) => hay.includes(kw));
+}
+
 export function formatUptime(seconds?: number): string {
   if (!seconds || seconds <= 0) return '—';
   const days = Math.floor(seconds / 86400);

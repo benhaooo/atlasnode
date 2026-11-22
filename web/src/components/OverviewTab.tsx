@@ -33,6 +33,7 @@ import {
   formatMbps,
   formatRelativeTime,
   formatSpeed,
+  isProxyServer,
   usageBarColor,
   usageTextColor,
 } from '../utils';
@@ -69,6 +70,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   const [editingTrafficPlan, setEditingTrafficPlan] = useState(false);
   const [hoveredDayIdx, setHoveredDayIdx] = useState<number | null>(null);
   const [showAllUnlocks, setShowAllUnlocks] = useState(false);
+  const [togglingProxy, setTogglingProxy] = useState(false);
 
   useEffect(() => {
     if (chartRange === 'live' || chartRange === 'daily') return;
@@ -105,6 +107,18 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   const nq = snapshot.latestNodeQuality;
   const ts = snapshot.trafficSummary;
   const allLinks = [...snapshot.server.quickLinks, ...snapshot.detectedLinks];
+  const proxyEnabled = isProxyServer(snapshot.server);
+  const pureProxyLayout = proxyEnabled && allLinks.length === 0 && !snapshot.dockerAvailable;
+
+  const handleEnableProxy = async () => {
+    setTogglingProxy(true);
+    try {
+      const { server } = await api.updateServer(snapshot.server.id, { proxyEnabled: true });
+      onServerUpdated(server);
+    } finally {
+      setTogglingProxy(false);
+    }
+  };
 
   const liveMaxBps = Math.max(m?.netRxBps || 0, m?.netTxBps || 0);
   const liveMaxMbps = (liveMaxBps * 8) / 1_000_000;
@@ -180,6 +194,427 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
     if (grade === 'poor') return 'bg-rose-400';
     return 'bg-slate-500';
   };
+
+  const quickLinksCard = (
+    <section className="lg:col-span-5 bg-white/[0.025] border border-white/[0.06] rounded-2xl p-5 flex flex-col justify-between gap-4">
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="text-sm font-medium text-white">快捷入口</h2>
+          <button
+            onClick={() => setAddingLink(!addingLink)}
+            className="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-sky-300 transition-colors cursor-pointer"
+          >
+            <Plus className="w-3 h-3" />
+            <span>添加</span>
+          </button>
+        </div>
+
+        {addingLink && (
+          <form
+            onSubmit={handleAddLink}
+            className="bg-black/30 border border-white/[0.08] rounded-xl p-3 space-y-2 text-xs"
+          >
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <input
+                required
+                placeholder="名称（如 1Panel）"
+                value={linkForm.name}
+                onChange={(e) => setLinkForm({ ...linkForm, name: e.target.value })}
+                className="bg-[#080a0f] border border-white/10 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-sky-400"
+              />
+              <input
+                required
+                placeholder="URL（https://...）"
+                value={linkForm.url}
+                onChange={(e) => setLinkForm({ ...linkForm, url: e.target.value })}
+                className="bg-[#080a0f] border border-white/10 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-sky-400 font-mono"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-1.5">
+              <button
+                type="button"
+                onClick={() => setAddingLink(false)}
+                className="px-2.5 py-1 text-slate-400 hover:text-white cursor-pointer"
+              >
+                取消
+              </button>
+              <button
+                type="submit"
+                className="px-3 py-1 rounded-lg bg-sky-500 text-slate-950 font-semibold cursor-pointer"
+              >
+                保存
+              </button>
+            </div>
+          </form>
+        )}
+
+        {allLinks.length === 0 ? (
+          <div className="py-8 text-center text-xs text-slate-500">
+            暂无 Web 入口，可点击右上角添加反代地址
+          </div>
+        ) : (
+          <div className="divide-y divide-white/[0.04] max-h-52 overflow-y-auto -mx-2">
+            {allLinks.map((link) => (
+              <a
+                key={link.id}
+                href={link.url}
+                target="_blank"
+                rel="noreferrer"
+                className="group/link flex items-center justify-between gap-3 px-2.5 py-2.5 rounded-lg hover:bg-white/[0.035] transition-colors"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-slate-200 group-hover/link:text-white truncate">
+                      {link.name}
+                    </span>
+                    {link.autoDetected && (
+                      <span className="text-[9px] font-mono text-slate-500">自动</span>
+                    )}
+                  </div>
+                  <div className="text-[11px] font-mono text-slate-500 truncate mt-0.5">
+                    {link.url.replace(/^https?:\/\//, '')}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  {!link.autoDetected && (
+                    <button
+                      onClick={(e) => handleRemoveLink(link.id, e)}
+                      title="删除"
+                      className="opacity-100 lg:opacity-0 lg:group-hover/link:opacity-100 p-1 text-slate-500 hover:text-rose-400 transition-all cursor-pointer"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  )}
+                  <ExternalLink className="w-3.5 h-3.5 text-slate-600 group-hover/link:text-sky-400 transition-colors" />
+                </div>
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="pt-3.5 border-t border-white/[0.05] space-y-2.5">
+        {snapshot.composeDirs.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {snapshot.composeDirs.slice(0, 4).map((cd) => (
+              <button
+                key={cd.project}
+                onClick={() => onJumpFolder(cd.dir)}
+                title={cd.dir}
+                className="inline-flex items-center gap-1 text-[11px] font-mono text-slate-400 hover:text-white hover:bg-white/[0.05] px-2 py-0.5 rounded-md transition-colors cursor-pointer"
+              >
+                <FolderOpen className="w-3 h-3 text-amber-400/75" />
+                <span>{cd.project}</span>
+              </button>
+            ))}
+            {snapshot.composeDirs.length > 4 && (
+              <span className="text-[10px] font-mono text-slate-600">
+                +{snapshot.composeDirs.length - 4}
+              </span>
+            )}
+          </div>
+        )}
+
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-slate-400 flex items-center gap-1.5">
+            <Box className="w-3.5 h-3.5 text-sky-400/80" />
+            {snapshot.dockerAvailable ? (
+              <>
+                运行中 <strong className="text-slate-100 font-mono">{snapshot.dockerSummary.running}</strong>/{snapshot.dockerSummary.total} 容器
+              </>
+            ) : (
+              <>常驻服务 {snapshot.systemdHighlights.length} 个</>
+            )}
+          </span>
+          <button
+            onClick={() => onNavigateTab('services')}
+            className="text-slate-400 hover:text-sky-300 inline-flex items-center gap-0.5 text-xs transition-colors cursor-pointer"
+          >
+            <span>管理服务</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+
+  const renderProxyDigestCard = (colSpanClass: string) => (
+    <section className={`${colSpanClass} bg-white/[0.025] border border-white/[0.06] rounded-2xl p-5 flex flex-col justify-between gap-4`}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <Zap className="w-3.5 h-3.5 text-emerald-400" />
+          <h2 className="text-sm font-medium text-white">线路与节点质检</h2>
+        </div>
+        <div className="flex items-center gap-3 text-xs">
+          <button
+            onClick={() => onNavigateTab('network')}
+            className="text-slate-400 hover:text-white inline-flex items-center gap-0.5 transition-colors cursor-pointer"
+          >
+            <span>线路</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={() => onNavigateTab('nodequality')}
+            className="text-sky-400 hover:text-sky-300 inline-flex items-center gap-0.5 transition-colors cursor-pointer"
+          >
+            <span>{nq ? '报告' : '去质检'}</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+
+      {snapshot.networkSummary && (
+        <button
+          onClick={() => onNavigateTab('network')}
+          className="w-full text-left flex flex-wrap items-center justify-between gap-2 py-2 px-3 rounded-xl bg-white/[0.025] hover:bg-white/[0.045] transition-colors cursor-pointer"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <span className={`w-2 h-2 rounded-full shrink-0 ${netDotColor(snapshot.networkSummary.grade)}`} />
+            <span className="text-xs text-slate-200 truncate">{snapshot.networkSummary.headline}</span>
+          </div>
+          <span className="text-[11px] font-mono text-slate-500 shrink-0">
+            {snapshot.networkSummary.samples > 0
+              ? `丢包 ${snapshot.networkSummary.maxLossPct}%${
+                  snapshot.networkSummary.peakDeltaMs !== undefined
+                    ? ` · 高峰 ${snapshot.networkSummary.peakDeltaMs >= 0 ? '+' : ''}${snapshot.networkSummary.peakDeltaMs}ms`
+                    : ''
+                }`
+              : snapshot.networkSummary.mode === 'off'
+                ? '后台探测已关'
+                : '采样中'}
+          </span>
+        </button>
+      )}
+
+      {nq ? (
+        <div className="space-y-4">
+          <div className="grid grid-cols-3 divide-x divide-white/[0.06]">
+            <div className="pr-3 min-w-0">
+              <div className="text-[10px] text-slate-500">归属 / ASN</div>
+              <div className="text-xs font-medium text-slate-100 mt-1 truncate">
+                {countryFlag(nq.summary.ip.country)} {nq.summary.ip.asn || '—'}
+              </div>
+              <div className="text-[10px] text-slate-500 truncate mt-0.5" title={nq.summary.ip.org || undefined}>
+                {nq.summary.ip.org || nq.summary.ip.country || '—'}
+              </div>
+            </div>
+            <div className="px-3 min-w-0">
+              <div className="text-[10px] text-slate-500">IP 性质</div>
+              <div className="text-xs font-medium text-slate-100 mt-1 truncate">
+                {nq.summary.ip.ipType || '未知'}
+              </div>
+              <div className="text-[10px] text-slate-500 truncate mt-0.5">
+                {nq.summary.ip.usageType || '—'}
+              </div>
+            </div>
+            <div className="pl-3 min-w-0">
+              <div className="text-[10px] text-slate-500">风控评级</div>
+              <div className={`text-xs font-medium mt-1 truncate ${riskColor(nq.summary.ip.riskLevel)}`}>
+                {nq.summary.ip.riskLevel === 'low'
+                  ? '纯净低风险'
+                  : nq.summary.ip.riskLevel === 'medium'
+                    ? '中等风险'
+                    : nq.summary.ip.riskLevel === 'high'
+                      ? '高风险'
+                      : '待评估'}
+              </div>
+              <div className="text-[10px] font-mono text-slate-500 truncate mt-0.5">
+                {nq.summary.ip.riskScore !== null && nq.summary.ip.riskScore !== undefined
+                  ? `评分 ${nq.summary.ip.riskScore}`
+                  : '—'}
+              </div>
+            </div>
+          </div>
+
+          {visibleUnlocks.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              {visibleUnlocks.map((u) => {
+                const ok = u.status === 'native' || u.status === 'unlocked' || u.status === 'dns';
+                return (
+                  <span
+                    key={u.service}
+                    title={u.detail || u.statusText || u.status}
+                    className={`text-[11px] px-2 py-0.5 rounded-md font-mono ${
+                      ok
+                        ? 'bg-emerald-500/[0.08] text-emerald-300'
+                        : u.status === 'app_only'
+                          ? 'bg-amber-500/[0.08] text-amber-300'
+                          : u.status === 'blocked'
+                            ? 'bg-rose-500/[0.07] text-rose-300/80'
+                            : 'bg-white/[0.04] text-slate-400'
+                    }`}
+                  >
+                    {countryFlag(u.region)} {u.service}
+                    {u.region ? ` ${u.region}` : ''}
+                  </span>
+                );
+              })}
+              {sortedUnlocks.length > 8 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllUnlocks((v) => !v)}
+                  className="text-[11px] font-mono text-slate-500 hover:text-sky-300 px-1.5 cursor-pointer"
+                >
+                  {showAllUnlocks ? '收起' : `+${sortedUnlocks.length - 8} 项`}
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="pt-3 border-t border-white/[0.05] space-y-2 text-[11px] font-mono text-slate-500">
+            {compactRoutes.length > 0 && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                {compactRoutes.map((r, i) => (
+                  <span key={i}>
+                    {r.city}
+                    {r.isp}{' '}
+                    <span className="text-sky-300">{r.lineType}</span>
+                    {r.latencyMs ? <span className="text-slate-400 ml-1">{r.latencyMs}ms</span> : null}
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-2 text-[10px]">
+              <span>上次质检 {formatRelativeTime(nq.finishedAt || nq.startedAt)}</span>
+              {nq.reportUrl && (
+                <a
+                  href={nq.reportUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sky-400 hover:text-sky-300 inline-flex items-center gap-1"
+                >
+                  <span>官方报告</span>
+                  <ExternalLink className="w-2.5 h-2.5" />
+                </a>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="py-5 flex items-center justify-between gap-3 text-xs text-slate-500">
+          <span>尚未运行 NodeQuality，暂无 IP 纯净度与流媒体解锁数据</span>
+          <button
+            onClick={() => onNavigateTab('nodequality')}
+            className="inline-flex items-center gap-1 text-emerald-400 hover:text-emerald-300 font-medium shrink-0 cursor-pointer"
+          >
+            <Zap className="w-3.5 h-3.5" />
+            <span>运行质检</span>
+          </button>
+        </div>
+      )}
+    </section>
+  );
+
+  const renderExposureSection = (standalone: boolean) => (
+    <div className={standalone ? 'bg-white/[0.025] border border-white/[0.06] rounded-2xl p-5 flex flex-col justify-between gap-4' : 'space-y-2.5'}>
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            {snapshot.firewallSummary.active ? (
+              <Shield className="w-3.5 h-3.5 text-emerald-400" />
+            ) : (
+              <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
+            )}
+            <h2 className="text-sm font-medium text-white">公网暴露与防火墙</h2>
+            <span
+              className={`text-[10px] font-mono ${
+                snapshot.firewallSummary.active ? 'text-emerald-400/90' : 'text-amber-300'
+              }`}
+            >
+              {snapshot.firewallSummary.engine.toUpperCase()}{' '}
+              {snapshot.firewallSummary.active ? '已启' : '未启'}
+            </span>
+          </div>
+          <button
+            onClick={() => onNavigateTab('firewall')}
+            className="text-xs text-slate-400 hover:text-sky-300 inline-flex items-center gap-0.5 transition-colors cursor-pointer"
+          >
+            <span>防火墙</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-[11px] font-mono">
+          {snapshot.publicPortsPreview.slice(0, standalone ? 14 : 6).map((p, idx) => (
+            <span key={`${p.port}-${idx}`} className="inline-flex items-center gap-1 text-slate-400">
+              <span className="text-amber-300/95">:{p.port}</span>
+              <span className="text-slate-500">{p.dockerContainer || p.process}</span>
+            </span>
+          ))}
+          {snapshot.publicPortsPreview.length > (standalone ? 14 : 6) && (
+            <button
+              onClick={() => onNavigateTab('firewall')}
+              className="text-slate-500 hover:text-sky-300 cursor-pointer"
+            >
+              +{snapshot.publicPortsPreview.length - (standalone ? 14 : 6)} 端口
+            </button>
+          )}
+          {snapshot.publicPortsPreview.length === 0 && (
+            <span className="text-slate-500 font-sans">无公网 TCP 监听</span>
+          )}
+        </div>
+      </div>
+
+      {standalone && (
+        <div className="pt-3 border-t border-white/[0.05] flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-slate-500">
+          <span>
+            公网 {snapshot.firewallSummary.publicPortsCount} · Tailscale {snapshot.firewallSummary.tailscalePortsCount} · 本机 {snapshot.firewallSummary.localPortsCount}
+          </span>
+          {pureProxyLayout && (
+            <button
+              onClick={() => onNavigateTab('services')}
+              className="text-slate-400 hover:text-sky-300 inline-flex items-center gap-0.5 font-sans cursor-pointer"
+            >
+              <span>常驻服务 ({snapshot.systemdHighlights.length})</span>
+              <ArrowUpRight className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  const renderProcessesSection = (standalone: boolean) => (
+    <div className={standalone ? 'bg-white/[0.025] border border-white/[0.06] rounded-2xl p-5 space-y-3' : 'pt-3.5 border-t border-white/[0.05] space-y-2'}>
+      <div className="flex items-center justify-between">
+        <span className={standalone ? 'text-sm font-medium text-white' : 'text-[11px] text-slate-500'}>
+          实时高耗进程
+        </span>
+        <span className="font-mono text-[10px] text-slate-500">PID · CPU · 内存</span>
+      </div>
+      <div className="space-y-1">
+        {(m?.topProcesses || []).slice(0, 5).map((proc) => {
+          const barWidth = Math.min(100, Math.max(0, proc.cpu));
+          return (
+            <div
+              key={proc.pid}
+              className="relative overflow-hidden rounded-lg px-2.5 py-1.5 flex items-center justify-between text-xs font-mono hover:bg-white/[0.03] transition-colors"
+            >
+              <div
+                className="pointer-events-none absolute inset-y-0 left-0 bg-sky-400/[0.06] transition-all duration-500"
+                style={{ width: `${barWidth}%` }}
+              />
+              <div className="relative flex items-center gap-2 min-w-0">
+                <span className="text-[10px] text-slate-600 w-10 shrink-0">{proc.pid}</span>
+                <span className="text-slate-200 truncate">{proc.command}</span>
+              </div>
+              <div className="relative flex items-center gap-3 shrink-0 text-[11px]">
+                <span className={proc.cpu >= 40 ? 'text-amber-300 font-medium' : 'text-sky-300/90'}>
+                  {proc.cpu.toFixed(1)}%
+                </span>
+                <span className="text-slate-500 w-14 text-right">
+                  {formatBytes(proc.rssKb * 1024, 0)}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+        {(!m || m.topProcesses.length === 0) && (
+          <div className="text-xs text-slate-500 py-2">正在采集进程信息...</div>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <div className="space-y-5">
@@ -597,426 +1032,57 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           )}
         </section>
 
-        {/* Right 5: Clean Quick Launcher & Containers */}
-        <section className="lg:col-span-5 bg-white/[0.025] border border-white/[0.06] rounded-2xl p-5 flex flex-col justify-between gap-4">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-sm font-medium text-white">快捷入口</h2>
-              <button
-                onClick={() => setAddingLink(!addingLink)}
-                className="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-sky-300 transition-colors cursor-pointer"
-              >
-                <Plus className="w-3 h-3" />
-                <span>添加</span>
-              </button>
-            </div>
-
-            {addingLink && (
-              <form
-                onSubmit={handleAddLink}
-                className="bg-black/30 border border-white/[0.08] rounded-xl p-3 space-y-2 text-xs"
-              >
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <input
-                    required
-                    placeholder="名称（如 1Panel）"
-                    value={linkForm.name}
-                    onChange={(e) => setLinkForm({ ...linkForm, name: e.target.value })}
-                    className="bg-[#080a0f] border border-white/10 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-sky-400"
-                  />
-                  <input
-                    required
-                    placeholder="URL（https://...）"
-                    value={linkForm.url}
-                    onChange={(e) => setLinkForm({ ...linkForm, url: e.target.value })}
-                    className="bg-[#080a0f] border border-white/10 rounded-lg px-2.5 py-1.5 text-white focus:outline-none focus:border-sky-400 font-mono"
-                  />
-                </div>
-                <div className="flex items-center justify-end gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setAddingLink(false)}
-                    className="px-2.5 py-1 text-slate-400 hover:text-white cursor-pointer"
-                  >
-                    取消
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-3 py-1 rounded-lg bg-sky-500 text-slate-950 font-semibold cursor-pointer"
-                  >
-                    保存
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {/* Borderless Clean Link List */}
-            {allLinks.length === 0 ? (
-              <div className="py-8 text-center text-xs text-slate-500">
-                暂无 Web 入口，可点击右上角添加反代地址
-              </div>
-            ) : (
-              <div className="divide-y divide-white/[0.04] max-h-52 overflow-y-auto -mx-2">
-                {allLinks.map((link) => (
-                  <a
-                    key={link.id}
-                    href={link.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="group/link flex items-center justify-between gap-3 px-2.5 py-2.5 rounded-lg hover:bg-white/[0.035] transition-colors"
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-medium text-slate-200 group-hover/link:text-white truncate">
-                          {link.name}
-                        </span>
-                        {link.autoDetected && (
-                          <span className="text-[9px] font-mono text-slate-500">自动</span>
-                        )}
-                      </div>
-                      <div className="text-[11px] font-mono text-slate-500 truncate mt-0.5">
-                        {link.url.replace(/^https?:\/\//, '')}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {!link.autoDetected && (
-                        <button
-                          onClick={(e) => handleRemoveLink(link.id, e)}
-                          title="删除"
-                          className="opacity-100 lg:opacity-0 lg:group-hover/link:opacity-100 p-1 text-slate-500 hover:text-rose-400 transition-all cursor-pointer"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      )}
-                      <ExternalLink className="w-3.5 h-3.5 text-slate-600 group-hover/link:text-sky-400 transition-colors" />
-                    </div>
-                  </a>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Compact Project Dirs & Services Footer */}
-          <div className="pt-3.5 border-t border-white/[0.05] space-y-2.5">
-            {snapshot.composeDirs.length > 0 && (
-              <div className="flex flex-wrap items-center gap-1.5">
-                {snapshot.composeDirs.slice(0, 4).map((cd) => (
-                  <button
-                    key={cd.project}
-                    onClick={() => onJumpFolder(cd.dir)}
-                    title={cd.dir}
-                    className="inline-flex items-center gap-1 text-[11px] font-mono text-slate-400 hover:text-white hover:bg-white/[0.05] px-2 py-0.5 rounded-md transition-colors cursor-pointer"
-                  >
-                    <FolderOpen className="w-3 h-3 text-amber-400/75" />
-                    <span>{cd.project}</span>
-                  </button>
-                ))}
-                {snapshot.composeDirs.length > 4 && (
-                  <span className="text-[10px] font-mono text-slate-600">
-                    +{snapshot.composeDirs.length - 4}
-                  </span>
-                )}
-              </div>
-            )}
-
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-400 flex items-center gap-1.5">
-                <Box className="w-3.5 h-3.5 text-sky-400/80" />
-                {snapshot.dockerAvailable ? (
-                  <>
-                    运行中 <strong className="text-slate-100 font-mono">{snapshot.dockerSummary.running}</strong>/{snapshot.dockerSummary.total} 容器
-                  </>
-                ) : (
-                  <>常驻服务 {snapshot.systemdHighlights.length} 个</>
-                )}
-              </span>
-              <button
-                onClick={() => onNavigateTab('services')}
-                className="text-slate-400 hover:text-sky-300 inline-flex items-center gap-0.5 text-xs transition-colors cursor-pointer"
-              >
-                <span>管理服务</span>
-                <ArrowUpRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-        </section>
+        {/* Right 5: Quick Launcher (default) OR Proxy Digest (for pure proxy exit nodes with no web apps) */}
+        {pureProxyLayout ? renderProxyDigestCard('lg:col-span-5') : quickLinksCard}
       </div>
 
-      {/* TIER 2: Distilled Secondary Row — Quality Digest (6) + Exposure & Processes (6) */}
+      {/* TIER 2: Universal Ops Bottom Row (+ optional Proxy Digest for hybrid nodes) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-        {/* Left 6: Line & NodeQuality Digest (distilled, no box-in-box) */}
-        <section className="lg:col-span-6 bg-white/[0.025] border border-white/[0.06] rounded-2xl p-5 flex flex-col justify-between gap-4">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="text-sm font-medium text-white">线路与节点质检</h2>
-            <div className="flex items-center gap-3 text-xs">
-              <button
-                onClick={() => onNavigateTab('network')}
-                className="text-slate-400 hover:text-white inline-flex items-center gap-0.5 transition-colors cursor-pointer"
-              >
-                <span>线路</span>
-                <ArrowUpRight className="w-3.5 h-3.5" />
-              </button>
-              <button
-                onClick={() => onNavigateTab('nodequality')}
-                className="text-sky-400 hover:text-sky-300 inline-flex items-center gap-0.5 transition-colors cursor-pointer"
-              >
-                <span>{nq ? '报告' : '去质检'}</span>
-                <ArrowUpRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-
-          {/* 1-Line Live Stability Summary */}
-          {snapshot.networkSummary && (
-            <button
-              onClick={() => onNavigateTab('network')}
-              className="w-full text-left flex flex-wrap items-center justify-between gap-2 py-2 px-3 rounded-xl bg-white/[0.025] hover:bg-white/[0.045] transition-colors cursor-pointer"
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <span className={`w-2 h-2 rounded-full shrink-0 ${netDotColor(snapshot.networkSummary.grade)}`} />
-                <span className="text-xs text-slate-200 truncate">{snapshot.networkSummary.headline}</span>
-              </div>
-              <span className="text-[11px] font-mono text-slate-500 shrink-0">
-                {snapshot.networkSummary.samples > 0
-                  ? `丢包 ${snapshot.networkSummary.maxLossPct}%${
-                      snapshot.networkSummary.peakDeltaMs !== undefined
-                        ? ` · 高峰 ${snapshot.networkSummary.peakDeltaMs >= 0 ? '+' : ''}${snapshot.networkSummary.peakDeltaMs}ms`
-                        : ''
-                    }`
-                  : snapshot.networkSummary.mode === 'off'
-                    ? '后台探测已关'
-                    : '采样中'}
-              </span>
-            </button>
-          )}
-
-          {nq ? (
-            <div className="space-y-4">
-              {/* Clean 3-column key-value strip with full org / usageType subtitles */}
-              <div className="grid grid-cols-3 divide-x divide-white/[0.06]">
-                <div className="pr-3 min-w-0">
-                  <div className="text-[10px] text-slate-500">归属 / ASN</div>
-                  <div className="text-xs font-medium text-slate-100 mt-1 truncate">
-                    {countryFlag(nq.summary.ip.country)} {nq.summary.ip.asn || '—'}
-                  </div>
-                  <div className="text-[10px] text-slate-500 truncate mt-0.5" title={nq.summary.ip.org || undefined}>
-                    {nq.summary.ip.org || nq.summary.ip.country || '—'}
-                  </div>
-                </div>
-                <div className="px-3 min-w-0">
-                  <div className="text-[10px] text-slate-500">IP 性质</div>
-                  <div className="text-xs font-medium text-slate-100 mt-1 truncate">
-                    {nq.summary.ip.ipType || '未知'}
-                  </div>
-                  <div className="text-[10px] text-slate-500 truncate mt-0.5">
-                    {nq.summary.ip.usageType || '—'}
-                  </div>
-                </div>
-                <div className="pl-3 min-w-0">
-                  <div className="text-[10px] text-slate-500">风控评级</div>
-                  <div className={`text-xs font-medium mt-1 truncate ${riskColor(nq.summary.ip.riskLevel)}`}>
-                    {nq.summary.ip.riskLevel === 'low'
-                      ? '纯净低风险'
-                      : nq.summary.ip.riskLevel === 'medium'
-                        ? '中等风险'
-                        : nq.summary.ip.riskLevel === 'high'
-                          ? '高风险'
-                          : '待评估'}
-                  </div>
-                  <div className="text-[10px] font-mono text-slate-500 truncate mt-0.5">
-                    {nq.summary.ip.riskScore !== null && nq.summary.ip.riskScore !== undefined
-                      ? `评分 ${nq.summary.ip.riskScore}`
-                      : '—'}
-                  </div>
-                </div>
-              </div>
-
-              {/* Compact Unlocks with regions preserved + inline expand */}
-              {visibleUnlocks.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {visibleUnlocks.map((u) => {
-                    const ok = u.status === 'native' || u.status === 'unlocked' || u.status === 'dns';
-                    return (
-                      <span
-                        key={u.service}
-                        title={u.detail || u.statusText || u.status}
-                        className={`text-[11px] px-2 py-0.5 rounded-md font-mono ${
-                          ok
-                            ? 'bg-emerald-500/[0.08] text-emerald-300'
-                            : u.status === 'app_only'
-                              ? 'bg-amber-500/[0.08] text-amber-300'
-                              : u.status === 'blocked'
-                                ? 'bg-rose-500/[0.07] text-rose-300/80'
-                                : 'bg-white/[0.04] text-slate-400'
-                        }`}
-                      >
-                        {countryFlag(u.region)} {u.service}
-                        {u.region ? ` ${u.region}` : ''}
-                      </span>
-                    );
-                  })}
-                  {sortedUnlocks.length > 8 && (
-                    <button
-                      type="button"
-                      onClick={() => setShowAllUnlocks((v) => !v)}
-                      className="text-[11px] font-mono text-slate-500 hover:text-sky-300 px-1.5 cursor-pointer"
-                    >
-                      {showAllUnlocks ? '收起' : `+${sortedUnlocks.length - 8} 项`}
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {/* Distilled Three-ISP Routes with city + latency + official report link */}
-              <div className="pt-3 border-t border-white/[0.05] space-y-2 text-[11px] font-mono text-slate-500">
-                {compactRoutes.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                    {compactRoutes.map((r, i) => (
-                      <span key={i}>
-                        {r.city}
-                        {r.isp}{' '}
-                        <span className="text-sky-300">{r.lineType}</span>
-                        {r.latencyMs ? <span className="text-slate-400 ml-1">{r.latencyMs}ms</span> : null}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <div className="flex items-center justify-between gap-2 text-[10px]">
-                  <span>上次质检 {formatRelativeTime(nq.finishedAt || nq.startedAt)}</span>
-                  {nq.reportUrl && (
-                    <a
-                      href={nq.reportUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-sky-400 hover:text-sky-300 inline-flex items-center gap-1"
-                    >
-                      <span>官方报告</span>
-                      <ExternalLink className="w-2.5 h-2.5" />
-                    </a>
-                  )}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="py-5 flex items-center justify-between gap-3 text-xs text-slate-500">
-              <span>尚未运行 NodeQuality，暂无 IP 纯净度与流媒体解锁数据</span>
-              <button
-                onClick={() => onNavigateTab('nodequality')}
-                className="inline-flex items-center gap-1 text-emerald-400 hover:text-emerald-300 font-medium shrink-0 cursor-pointer"
-              >
-                <Zap className="w-3.5 h-3.5" />
-                <span>运行质检</span>
-              </button>
-            </div>
-          )}
-        </section>
-
-        {/* Right 6: Exposure & Live Top Processes (subtle CPU heat bars!) */}
-        <section className="lg:col-span-6 bg-white/[0.025] border border-white/[0.06] rounded-2xl p-5 flex flex-col justify-between gap-4">
-          {/* Public Ports Compact Row */}
-          <div className="space-y-2.5">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                {snapshot.firewallSummary.active ? (
-                  <Shield className="w-3.5 h-3.5 text-emerald-400" />
-                ) : (
-                  <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
-                )}
-                <h2 className="text-sm font-medium text-white">公网暴露</h2>
-                <span
-                  className={`text-[10px] font-mono ${
-                    snapshot.firewallSummary.active ? 'text-emerald-400/90' : 'text-amber-300'
-                  }`}
-                >
-                  {snapshot.firewallSummary.engine.toUpperCase()}{' '}
-                  {snapshot.firewallSummary.active ? '已启' : '未启'}
-                </span>
-              </div>
-              <button
-                onClick={() => onNavigateTab('firewall')}
-                className="text-xs text-slate-400 hover:text-sky-300 inline-flex items-center gap-0.5 transition-colors cursor-pointer"
-              >
-                <span>防火墙</span>
-                <ArrowUpRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[11px] font-mono">
-              {snapshot.publicPortsPreview.slice(0, 6).map((p, idx) => (
-                <span key={`${p.port}-${idx}`} className="inline-flex items-center gap-1 text-slate-400">
-                  <span className="text-amber-300/95">:{p.port}</span>
-                  <span className="text-slate-500">{p.dockerContainer || p.process}</span>
-                </span>
-              ))}
-              {snapshot.publicPortsPreview.length > 6 && (
-                <button
-                  onClick={() => onNavigateTab('firewall')}
-                  className="text-slate-500 hover:text-sky-300 cursor-pointer"
-                >
-                  +{snapshot.publicPortsPreview.length - 6} 端口
-                </button>
-              )}
-              {snapshot.publicPortsPreview.length === 0 && (
-                <span className="text-slate-500 font-sans">无公网 TCP 监听</span>
-              )}
-            </div>
-          </div>
-
-          {/* Top 4 Processes with subtle inline CPU heat backdrop */}
-          <div className="pt-3.5 border-t border-white/[0.05] space-y-2">
-            <div className="flex items-center justify-between text-[11px] text-slate-500">
-              <span>实时高耗进程</span>
-              <span className="font-mono text-[10px]">CPU · 内存</span>
-            </div>
-            <div className="space-y-1">
-              {(m?.topProcesses || []).slice(0, 5).map((proc) => {
-                const barWidth = Math.min(100, Math.max(0, proc.cpu));
-                return (
-                  <div
-                    key={proc.pid}
-                    className="relative overflow-hidden rounded-lg px-2.5 py-1.5 flex items-center justify-between text-xs font-mono hover:bg-white/[0.03] transition-colors"
-                  >
-                    <div
-                      className="pointer-events-none absolute inset-y-0 left-0 bg-sky-400/[0.06] transition-all duration-500"
-                      style={{ width: `${barWidth}%` }}
-                    />
-                    <div className="relative flex items-center gap-2 min-w-0">
-                      <span className="text-[10px] text-slate-600 w-10 shrink-0">{proc.pid}</span>
-                      <span className="text-slate-200 truncate">{proc.command}</span>
-                    </div>
-                    <div className="relative flex items-center gap-3 shrink-0 text-[11px]">
-                      <span className={proc.cpu >= 40 ? 'text-amber-300 font-medium' : 'text-sky-300/90'}>
-                        {proc.cpu.toFixed(1)}%
-                      </span>
-                      <span className="text-slate-500 w-14 text-right">
-                        {formatBytes(proc.rssKb * 1024, 0)}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-              {(!m || m.topProcesses.length === 0) && (
-                <div className="text-xs text-slate-500 py-2">正在采集进程信息...</div>
-              )}
-            </div>
-          </div>
-        </section>
+        {proxyEnabled && !pureProxyLayout ? (
+          <>
+            {renderProxyDigestCard('lg:col-span-6')}
+            <section className="lg:col-span-6 bg-white/[0.025] border border-white/[0.06] rounded-2xl p-5 flex flex-col justify-between gap-4">
+              {renderExposureSection(false)}
+              {renderProcessesSection(false)}
+            </section>
+          </>
+        ) : (
+          <>
+            <div className="lg:col-span-6">{renderExposureSection(true)}</div>
+            <div className="lg:col-span-6">{renderProcessesSection(true)}</div>
+          </>
+        )}
       </div>
 
-      {/* TIER 3: Quiet Collapsible Hardware, Notes & Interfaces Footer */}
+      {/* TIER 3: Quiet Collapsible Hardware & Interfaces Footer (+ opt-in proxy capability) */}
       <section className="border-t border-white/[0.05] pt-3">
-        <button
-          onClick={() => setShowSpecs(!showSpecs)}
-          className="w-full flex items-center justify-between py-1.5 text-left text-xs text-slate-500 hover:text-slate-300 transition-colors cursor-pointer"
-        >
-          <span className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <button
+            onClick={() => setShowSpecs(!showSpecs)}
+            className="flex items-center gap-1.5 py-1.5 text-left text-xs text-slate-500 hover:text-slate-300 transition-colors cursor-pointer"
+          >
             {showSpecs ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
             <span>硬件规格 · 磁盘挂载与网卡明细</span>
-          </span>
-          <span className="text-[11px] font-mono text-slate-600 hidden sm:inline truncate max-w-md">
-            {snapshot.cpuModel || 'CPU'} · {snapshot.arch} · {snapshot.kernel}
-          </span>
-        </button>
+          </button>
+
+          <div className="flex items-center gap-3 text-[11px]">
+            <span className="font-mono text-slate-600 hidden md:inline truncate max-w-sm">
+              {snapshot.cpuModel || 'CPU'} · {snapshot.arch} · {snapshot.kernel}
+            </span>
+            {!proxyEnabled && (
+              <button
+                type="button"
+                disabled={togglingProxy}
+                onClick={handleEnableProxy}
+                title="为此节点启用晚高峰线路监控、IP 纯净度与流媒体/AI 解锁质检"
+                className="inline-flex items-center gap-1 text-slate-500 hover:text-emerald-300 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                <Zap className="w-3 h-3" />
+                <span>{togglingProxy ? '启用中...' : '附加代理质检'}</span>
+              </button>
+            )}
+          </div>
+        </div>
 
         {showSpecs && (
           <div className="mt-3 bg-white/[0.02] border border-white/[0.05] rounded-2xl p-4 sm:p-5 space-y-4 text-xs">

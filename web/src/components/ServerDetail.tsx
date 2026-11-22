@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api';
 import type { LiveMetrics, ServerConfig, ServerSnapshot, TrafficSummary } from '../types';
-import { copyToClipboard, formatUptime, serverFlag } from '../utils';
+import { copyToClipboard, formatUptime, isProxyServer, serverFlag } from '../utils';
 import { OverviewTab } from './OverviewTab';
 import { ServicesTab } from './ServicesTab';
 import { NodeQualityTab } from './NodeQualityTab';
@@ -115,6 +115,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
     role: snapshot.server.role,
     notes: snapshot.server.notes,
     tags: snapshot.server.tags.join(', '),
+    proxyEnabled: isProxyServer(snapshot.server),
   });
   const [savingMeta, setSavingMeta] = useState(false);
   const esRef = useRef<EventSource | null>(null);
@@ -141,8 +142,18 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
       role: snapshot.server.role,
       notes: snapshot.server.notes,
       tags: snapshot.server.tags.join(', '),
+      proxyEnabled: isProxyServer(snapshot.server),
     });
   }, [snapshot.server]);
+
+  const proxyEnabled = isProxyServer(snapshot.server);
+
+  useEffect(() => {
+    if (!proxyEnabled && (activeTab === 'network' || activeTab === 'nodequality')) {
+      setActiveTab('overview');
+      onTabChange?.('overview');
+    }
+  }, [proxyEnabled, activeTab, onTabChange]);
 
   // Live SSE telemetry stream per server
   useEffect(() => {
@@ -207,6 +218,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
           .split(/[,，]/)
           .map((s) => s.trim())
           .filter(Boolean),
+        proxyEnabled: metaForm.proxyEnabled,
       });
       onServerUpdated(server);
       setEditingMeta(false);
@@ -256,6 +268,17 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                 <h1 className="text-base sm:text-lg font-semibold text-white tracking-tight">
                   {snapshot.server.name}
                 </h1>
+                {proxyEnabled && (
+                  <button
+                    type="button"
+                    onClick={() => setEditingMeta(true)}
+                    title="已附加代理节点能力（点击调整）"
+                    className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300/90 hover:bg-emerald-500/20 transition-colors cursor-pointer"
+                  >
+                    <Zap className="w-2.5 h-2.5" />
+                    <span>代理节点</span>
+                  </button>
+                )}
                 {snapshot.server.role && (
                   <span className="text-xs text-slate-400">{snapshot.server.role}</span>
                 )}
@@ -393,7 +416,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
       <header className="sticky top-12 lg:top-0 z-20 bg-[#080a0f]/85 backdrop-blur-xl border-b border-white/[0.05]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
           <nav className="flex items-center gap-0.5 sm:gap-1 overflow-x-auto no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0 -mb-px">
-            {PRIMARY_TABS.map((g) => {
+            {PRIMARY_TABS.filter((g) => g.id !== 'quality' || proxyEnabled).map((g) => {
               const Icon = g.icon;
               const isActive = activeGroup === g.id;
               return (
@@ -622,6 +645,23 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                   className="w-full bg-[#090b10] border border-white/10 rounded-lg px-3 py-2 text-white focus:border-sky-400 focus:outline-none"
                 />
               </div>
+              <label className="flex items-start gap-2.5 bg-[#090b10] border border-white/[0.08] rounded-xl p-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={metaForm.proxyEnabled}
+                  onChange={(e) => setMetaForm({ ...metaForm, proxyEnabled: e.target.checked })}
+                  className="mt-0.5 rounded accent-emerald-500 cursor-pointer"
+                />
+                <span>
+                  <span className="text-slate-200 font-medium flex items-center gap-1.5">
+                    <Zap className="w-3.5 h-3.5 text-emerald-400" />
+                    附加代理节点能力
+                  </span>
+                  <span className="block text-[11px] text-slate-500 mt-0.5">
+                    开启后展示「线路与质检」页签，并在概览与总览呈现晚高峰监控、IP 纯净度及流媒体/AI 解锁；关闭则为纯粹的通用运维视图。
+                  </span>
+                </span>
+              </label>
               <div className="flex justify-end gap-2 pt-2">
                 <button
                   type="button"

@@ -9,9 +9,10 @@ import {
   ShieldAlert,
   Wifi,
   X,
+  Zap,
 } from 'lucide-react';
 import type { ServerSnapshot } from '../types';
-import { serverFlag } from '../utils';
+import { isProxyServer, serverFlag } from '../utils';
 import { BrandLogo } from './BrandLogo';
 
 interface SidebarProps {
@@ -199,6 +200,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <span className={`text-xs truncate ${isSelected ? 'font-semibold text-white' : 'font-medium text-slate-200'}`}>
                       {snap.server.name}
                     </span>
+                    {isProxyServer(snap.server) && (
+                      <span title="已附加代理节点能力" className="shrink-0 text-emerald-400/75">
+                        <Zap className="w-2.5 h-2.5" />
+                      </span>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-1 shrink-0">

@@ -23,6 +23,7 @@ import {
   formatBytes,
   formatSpeed,
   formatUptime,
+  isProxyServer,
   serverFlag,
   usageBarColor,
   usageTextColor,
@@ -43,6 +44,11 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
   onAddServer,
 }) => {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [filterMode, setFilterMode] = useState<'all' | 'proxy'>('all');
+
+  const proxyCount = snapshots.filter((s) => isProxyServer(s.server)).length;
+  const visibleSnapshots =
+    filterMode === 'proxy' ? snapshots.filter((s) => isProxyServer(s.server)) : snapshots;
 
   const handleCopy = async (key: string, text: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -96,7 +102,7 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
         tab: 'firewall',
       });
     }
-    if (s.networkSummary?.grade === 'poor') {
+    if (isProxyServer(s.server) && s.networkSummary?.grade === 'poor') {
       alerts.push({
         serverId: s.server.id,
         serverName: s.server.name,
@@ -151,13 +157,37 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
           </div>
         </div>
 
-        <button
-          onClick={onAddServer}
-          className="self-start sm:self-auto inline-flex items-center gap-1.5 bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold text-xs px-3.5 py-2 rounded-xl transition-colors cursor-pointer"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          <span>添加节点</span>
-        </button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          {proxyCount > 0 && proxyCount < snapshots.length && (
+            <div className="inline-flex items-center bg-white/[0.03] border border-white/[0.06] rounded-xl p-0.5 text-xs">
+              <button
+                onClick={() => setFilterMode('all')}
+                className={`px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                  filterMode === 'all' ? 'bg-white/[0.1] text-white font-medium' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                全部 ({snapshots.length})
+              </button>
+              <button
+                onClick={() => setFilterMode('proxy')}
+                className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                  filterMode === 'proxy' ? 'bg-emerald-500/15 text-emerald-300 font-medium' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Zap className="w-3 h-3" />
+                <span>代理 ({proxyCount})</span>
+              </button>
+            </div>
+          )}
+
+          <button
+            onClick={onAddServer}
+            className="inline-flex items-center gap-1.5 bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold text-xs px-3.5 py-2 rounded-xl transition-colors cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>添加节点</span>
+          </button>
+        </div>
       </div>
 
       {/* Quiet Priority Attention Strip */}
@@ -190,10 +220,11 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
         <FleetSkeleton />
       ) : (
         <div className="space-y-3.5">
-          {snapshots.map((snap) => {
+          {visibleSnapshots.map((snap) => {
             const m = snap.metrics;
             const nq = snap.latestNodeQuality;
             const ts = snap.trafficSummary;
+            const isProxy = isProxyServer(snap.server);
             const allLinks = [...snap.server.quickLinks, ...snap.detectedLinks].slice(0, 4);
             const sshCmd = `ssh ${snap.server.username}@${snap.tailscaleIp || snap.publicIp || snap.server.host}${snap.server.port !== 22 ? ` -p ${snap.server.port}` : ''}`;
 
@@ -240,6 +271,12 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
                         {snap.server.mode === 'local' && (
                           <span className="text-[10px] font-mono text-sky-300/90 bg-sky-500/10 px-1.5 py-0.5 rounded">
                             中枢
+                          </span>
+                        )}
+                        {isProxy && (
+                          <span className="inline-flex items-center gap-0.5 text-[10px] text-emerald-300/90 bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                            <Zap className="w-2.5 h-2.5" />
+                            <span>代理</span>
                           </span>
                         )}
                       </div>
@@ -351,7 +388,7 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
                           {snap.firewallSummary.engine.toUpperCase()}
                         </span>
                         <span className="font-mono">公网 {snap.firewallSummary.publicPortsCount} 端口</span>
-                        {snap.networkSummary && snap.networkSummary.grade !== 'collecting' && (
+                        {isProxy && snap.networkSummary && snap.networkSummary.grade !== 'collecting' && (
                           <span className="inline-flex items-center gap-1.5 text-slate-400 font-mono">
                             <span className={`w-1.5 h-1.5 rounded-full ${netDotColor(snap.networkSummary.grade)}`} />
                             <span>
@@ -408,26 +445,32 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
                           ))}
                         </div>
 
-                        {/* Compact 1-line Quality & Traffic Micro-footer */}
+                        {/* Compact 1-line Traffic & Optional Proxy Quality Micro-footer */}
                         <div className="flex items-center justify-between gap-2 pt-1 text-[10px] font-mono text-slate-500">
-                          <span className="truncate flex items-center gap-1.5">
-                            {snap.activeNodeQualityJob ? (
-                              <span className="text-amber-300 inline-flex items-center gap-1">
-                                <Activity className="w-3 h-3 animate-pulse" />
-                                {snap.activeNodeQualityJob.phase}
-                              </span>
-                            ) : nq ? (
-                              <>
-                                <Zap className="w-3 h-3 text-emerald-400/80 shrink-0" />
-                                <span className="text-slate-400 truncate">
-                                  {countryFlag(nq.summary.ip.country)} {nq.summary.ip.asn || 'NodeQuality'}
-                                  {nq.summary.ip.ipType ? ` · ${nq.summary.ip.ipType}` : ''}
+                          {isProxy ? (
+                            <span className="truncate flex items-center gap-1.5">
+                              {snap.activeNodeQualityJob ? (
+                                <span className="text-amber-300 inline-flex items-center gap-1">
+                                  <Activity className="w-3 h-3 animate-pulse" />
+                                  {snap.activeNodeQualityJob.phase}
                                 </span>
-                              </>
-                            ) : (
-                              <span>未运行质检</span>
-                            )}
-                          </span>
+                              ) : nq ? (
+                                <>
+                                  <Zap className="w-3 h-3 text-emerald-400/80 shrink-0" />
+                                  <span className="text-slate-400 truncate">
+                                    {countryFlag(nq.summary.ip.country)} {nq.summary.ip.asn || 'NodeQuality'}
+                                    {nq.summary.ip.ipType ? ` · ${nq.summary.ip.ipType}` : ''}
+                                  </span>
+                                </>
+                              ) : (
+                                <span>待运行 NodeQuality 质检</span>
+                              )}
+                            </span>
+                          ) : (
+                            <span className="truncate">
+                              Swap {m.swapTotalBytes > 0 ? `${formatBytes(m.swapUsedBytes, 0)}/${formatBytes(m.swapTotalBytes, 0)}` : '无'}
+                            </span>
+                          )}
 
                           {ts && ts.quotaBytes === 0 && (
                             <span className="shrink-0">
@@ -436,7 +479,7 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
                             </span>
                           )}
                         </div>
-                        {keyUnlocks.length > 0 && (
+                        {isProxy && keyUnlocks.length > 0 && (
                           <div className="flex flex-wrap gap-1">
                             {keyUnlocks.map((u) => (
                               <span

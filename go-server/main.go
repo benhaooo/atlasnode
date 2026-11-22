@@ -133,8 +133,9 @@ func main() {
 			UseSudo     bool            `json:"useSudo"`
 			PublicIP    string          `json:"publicIp"`
 			TailscaleIP string          `json:"tailscaleIp"`
-			JumpHost    *JumpHostConfig `json:"jumpHost"`
-			QuickLinks  []QuickLink     `json:"quickLinks"`
+			JumpHost     *JumpHostConfig `json:"jumpHost"`
+			QuickLinks   []QuickLink     `json:"quickLinks"`
+			ProxyEnabled *bool           `json:"proxyEnabled"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -225,10 +226,11 @@ func main() {
 			UseSudo:     body.UseSudo,
 			PublicIP:    firstNonEmpty(body.PublicIP, func() string { if existing != nil { return existing.PublicIP }; return "" }()),
 			TailscaleIP: firstNonEmpty(body.TailscaleIP, func() string { if existing != nil { return existing.TailscaleIP }; return "" }()),
-			JumpHost:    jh,
-			QuickLinks:  ql,
-			TrafficPlan: func() *TrafficPlan { if existing != nil { return existing.TrafficPlan }; return nil }(),
-			CreatedAt:   createdAt,
+			JumpHost:     jh,
+			QuickLinks:   ql,
+			TrafficPlan:  func() *TrafficPlan { if existing != nil { return existing.TrafficPlan }; return nil }(),
+			ProxyEnabled: func() *bool { if body.ProxyEnabled != nil { return body.ProxyEnabled }; if existing != nil { return existing.ProxyEnabled }; return nil }(),
+			CreatedAt:    createdAt,
 		}
 		upsertServer(srv)
 		writeJSON(w, http.StatusOK, map[string]any{"server": srv})
@@ -333,6 +335,16 @@ func main() {
 			var ql []QuickLink
 			if json.Unmarshal(v, &ql) == nil {
 				updated.QuickLinks = ql
+			}
+		}
+		if v, ok := body["proxyEnabled"]; ok {
+			if strings.TrimSpace(string(v)) == "null" {
+				updated.ProxyEnabled = nil
+			} else {
+				var b bool
+				if json.Unmarshal(v, &b) == nil {
+					updated.ProxyEnabled = &b
+				}
 			}
 		}
 		if v, ok := body["trafficPlan"]; ok {

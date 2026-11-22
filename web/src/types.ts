@@ -73,6 +73,7 @@ export interface ServerConfig {
   jumpHost?: JumpHostConfig;
   quickLinks: QuickLink[];
   trafficPlan?: TrafficPlan;
+  proxyEnabled?: boolean;
   createdAt: string;
 }
 

@@ -47,6 +47,7 @@ interface ServerDetailProps {
   snapshot: ServerSnapshot;
   initialTab?: ServerTab;
   onTabChange?: (tab: ServerTab) => void;
+  onLiveMetrics?: (serverId: string, metrics: LiveMetrics) => void;
   onRefreshSnapshot: () => void;
   onServerUpdated: (server: ServerConfig) => void;
   onServerDeleted: () => void;
@@ -89,6 +90,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
   snapshot,
   initialTab = 'overview',
   onTabChange,
+  onLiveMetrics,
   onRefreshSnapshot,
   onServerUpdated,
   onServerDeleted,
@@ -164,6 +166,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
         const m = JSON.parse((ev as MessageEvent).data) as LiveMetrics;
         setStreamConnected(true);
         setLiveMetrics(m);
+        onLiveMetrics?.(snapshot.server.id, m);
         setHistory((prev) => ({
           cpu: [...prev.cpu.slice(-44), m.cpuPercent],
           rx: [...prev.rx.slice(-44), m.netRxBps],

@@ -217,7 +217,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <div>
                     <div className="flex justify-between text-[9px] font-mono text-slate-500 mb-0.5">
                       <span>CPU</span>
-                      <span className="text-slate-300">{cpu.toFixed(0)}%</span>
+                      <span className="text-slate-300">{cpu.toFixed(1)}%</span>
                     </div>
                     <div className="h-1 bg-white/[0.06] rounded-full overflow-hidden">
                       <div

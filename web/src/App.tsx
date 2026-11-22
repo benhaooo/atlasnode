@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
-import type { ServerConfig, ServerSnapshot } from './types';
+import type { LiveMetrics, ServerConfig, ServerSnapshot } from './types';
 import { LoginScreen } from './components/LoginScreen';
 import { Sidebar } from './components/Sidebar';
 import { FleetOverview } from './components/FleetOverview';
@@ -148,11 +148,30 @@ export default function App() {
     }
   }, []);
 
+  const liveMetricsAtRef = useRef<Record<string, number>>({});
+
   const fetchFleet = useCallback(async (fresh = false) => {
     setLoadingFleet(true);
     try {
       const res = await api.getFleetSnapshots(fresh);
-      setSnapshots(res.snapshots);
+      const now = Date.now();
+      setSnapshots((prev) => {
+        const prevMap = new Map(prev.map((p) => [p.server.id, p]));
+        return res.snapshots.map((next) => {
+          const old = prevMap.get(next.server.id);
+          const sseFresh = now - (liveMetricsAtRef.current[next.server.id] ?? 0) < 6000;
+          // Preserve active 2s SSE metrics instead of letting 30s snapshot polling overwrite with older/0.45s spike readings
+          if (
+            !fresh &&
+            old?.metrics &&
+            next.metrics &&
+            (sseFresh || old.metrics.timestamp > next.metrics.timestamp)
+          ) {
+            return { ...next, metrics: old.metrics };
+          }
+          return next;
+        });
+      });
       setFleetLoadedOnce(true);
     } catch {
       // handled via unauthorized event or inline state
@@ -222,6 +241,13 @@ export default function App() {
       prev.map((s) => (s.server.id === updated.id ? { ...s, server: updated } : s))
     );
   };
+
+  const handleLiveMetrics = useCallback((serverId: string, metrics: LiveMetrics) => {
+    liveMetricsAtRef.current[serverId] = Date.now();
+    setSnapshots((prev) =>
+      prev.map((s) => (s.server.id === serverId ? { ...s, metrics } : s))
+    );
+  }, []);
 
   const handleLogout = async () => {
     await api.logout();
@@ -341,6 +367,7 @@ export default function App() {
             snapshot={activeSnapshot}
             initialTab={initialTab}
             onTabChange={handleTabChange}
+            onLiveMetrics={handleLiveMetrics}
             onRefreshSnapshot={() => refreshSingleSnapshot(activeSnapshot.server.id)}
             onServerUpdated={handleServerUpdated}
             onServerDeleted={() => {

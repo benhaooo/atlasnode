@@ -20,9 +20,23 @@ import (
 
 var (
 	processStartedAt = time.Now()
-	snapshotCache    = NewTtlCache[ServerSnapshot](8 * time.Second)
+	snapshotCache    = NewTtlCache[ServerSnapshot](12 * time.Second)
+	servicesCache    = NewTtlCache[ServicesDetailResult](30 * time.Second)
+	proxiesCache     = NewTtlCache[[]ProxyRoute](2 * time.Minute)
+	firewallCache    = NewTtlCache[FirewallData](2 * time.Minute)
+	keysCache        = NewTtlCache[SshSecurityInfo](2 * time.Minute)
+	assetsCache      = NewTtlCache[DiskAuditData](10 * time.Minute)
 	reSlug           = regexp.MustCompile(`[^a-z0-9-]+`)
 )
+
+func invalidateAllServerCaches(id string) {
+	snapshotCache.Invalidate(id)
+	servicesCache.Invalidate(id)
+	proxiesCache.Invalidate(id)
+	firewallCache.Invalidate(id)
+	keysCache.Invalidate(id)
+	assetsCache.Invalidate(id)
+}
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -108,7 +122,7 @@ func main() {
 			wg.Add(1)
 			go func(idx int, srv ServerConfig) {
 				defer wg.Done()
-				snap, _ := snapshotCache.GetOrLoad(srv.ID, fresh, func() (ServerSnapshot, error) {
+				snap, _, _, _ := snapshotCache.GetStaleOrLoad(srv.ID, fresh, 90*time.Second, func() (ServerSnapshot, error) {
 					return collectServerSnapshot(srv, getActiveNodeQualityJob(srv.ID)), nil
 				})
 				snaps[idx] = snap
@@ -435,7 +449,7 @@ func main() {
 			return
 		}
 		deleteServerByID(existing.ID)
-		snapshotCache.Invalidate(existing.ID)
+		invalidateAllServerCaches(existing.ID)
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}))
 
@@ -619,12 +633,21 @@ func main() {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "服务器不存在"})
 			return
 		}
-		data, err := collectServicesDetail(*srv)
+		fresh := r.URL.Query().Get("fresh") == "1"
+		data, cachedAt, stale, err := servicesCache.GetStaleOrLoad(srv.ID, fresh, 5*time.Minute, func() (ServicesDetailResult, error) {
+			return collectServicesDetail(*srv)
+		})
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, data)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"dockerAvailable": data.DockerAvailable,
+			"containers":      data.Containers,
+			"systemdServices": data.SystemdServices,
+			"cachedAt":        cachedAt.UTC().Format(time.RFC3339),
+			"stale":           stale,
+		})
 	}))
 
 	mux.HandleFunc("POST /api/servers/{id}/docker/{containerId}/{action}", requireAuth(func(w http.ResponseWriter, r *http.Request) {
@@ -645,6 +668,8 @@ func main() {
 				return
 			}
 			snapshotCache.Invalidate(srv.ID)
+			servicesCache.Invalidate(srv.ID)
+			proxiesCache.Invalidate(srv.ID)
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out})
 			return
 		}
@@ -658,6 +683,8 @@ func main() {
 			return
 		}
 		snapshotCache.Invalidate(srv.ID)
+		servicesCache.Invalidate(srv.ID)
+		proxiesCache.Invalidate(srv.ID)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out})
 	}))
 
@@ -712,6 +739,9 @@ func main() {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+		snapshotCache.Invalidate(srv.ID)
+		servicesCache.Invalidate(srv.ID)
+		proxiesCache.Invalidate(srv.ID)
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}))
 
@@ -860,12 +890,19 @@ func main() {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "服务器不存在"})
 			return
 		}
-		fw, err := collectFirewall(*srv)
+		fresh := r.URL.Query().Get("fresh") == "1"
+		fw, cachedAt, stale, err := firewallCache.GetStaleOrLoad(srv.ID, fresh, 10*time.Minute, func() (FirewallData, error) {
+			return collectFirewall(*srv)
+		})
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"firewall": fw})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"firewall": fw,
+			"cachedAt": cachedAt.UTC().Format(time.RFC3339),
+			"stale":    stale,
+		})
 	}))
 
 	mux.HandleFunc("POST /api/servers/{id}/firewall/ufw/add", requireAuth(func(w http.ResponseWriter, r *http.Request) {
@@ -888,6 +925,7 @@ func main() {
 			return
 		}
 		snapshotCache.Invalidate(srv.ID)
+		firewallCache.Invalidate(srv.ID)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out})
 	}))
 
@@ -907,6 +945,7 @@ func main() {
 			return
 		}
 		snapshotCache.Invalidate(srv.ID)
+		firewallCache.Invalidate(srv.ID)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out})
 	}))
 
@@ -926,6 +965,7 @@ func main() {
 			return
 		}
 		snapshotCache.Invalidate(srv.ID)
+		firewallCache.Invalidate(srv.ID)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out})
 	}))
 
@@ -949,6 +989,7 @@ func main() {
 			return
 		}
 		snapshotCache.Invalidate(srv.ID)
+		firewallCache.Invalidate(srv.ID)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out})
 	}))
 
@@ -970,6 +1011,7 @@ func main() {
 			return
 		}
 		snapshotCache.Invalidate(srv.ID)
+		firewallCache.Invalidate(srv.ID)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out})
 	}))
 
@@ -1119,12 +1161,23 @@ func main() {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "服务器不存在"})
 			return
 		}
-		info, err := collectSshKeys(*srv)
+		fresh := r.URL.Query().Get("fresh") == "1"
+		info, cachedAt, stale, err := keysCache.GetStaleOrLoad(srv.ID, fresh, 10*time.Minute, func() (SshSecurityInfo, error) {
+			return collectSshKeys(*srv)
+		})
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, info)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"targetFile":       info.TargetFile,
+			"keys":             info.Keys,
+			"sshdConfig":       info.SshdConfig,
+			"recentLogins":     info.RecentLogins,
+			"managerPublicKey": info.ManagerPublicKey,
+			"cachedAt":         cachedAt.UTC().Format(time.RFC3339),
+			"stale":            stale,
+		})
 	}))
 
 	mux.HandleFunc("POST /api/servers/{id}/keys/add", requireAuth(func(w http.ResponseWriter, r *http.Request) {
@@ -1141,6 +1194,7 @@ func main() {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		keysCache.Invalidate(srv.ID)
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}))
 
@@ -1158,6 +1212,7 @@ func main() {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		keysCache.Invalidate(srv.ID)
 		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	}))
 
@@ -1171,7 +1226,9 @@ func main() {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "公钥不能为空"})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"results": syncSshKeyToAllServers(loadServers(), pk)})
+		res := syncSshKeyToAllServers(loadServers(), pk)
+		keysCache.Invalidate("")
+		writeJSON(w, http.StatusOK, map[string]any{"results": res})
 	}))
 
 	// Proxies, Assets, Docker Prune, Compose, Mesh, Alerts
@@ -1181,12 +1238,19 @@ func main() {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "服务器不存在"})
 			return
 		}
-		routes, err := collectProxyRoutes(*srv)
+		fresh := r.URL.Query().Get("fresh") == "1"
+		routes, cachedAt, stale, err := proxiesCache.GetStaleOrLoad(srv.ID, fresh, 10*time.Minute, func() ([]ProxyRoute, error) {
+			return collectProxyRoutes(*srv)
+		})
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"routes": routes})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"routes":   routes,
+			"cachedAt": cachedAt.UTC().Format(time.RFC3339),
+			"stale":    stale,
+		})
 	}))
 
 	mux.HandleFunc("GET /api/servers/{id}/assets", requireAuth(func(w http.ResponseWriter, r *http.Request) {
@@ -1195,12 +1259,19 @@ func main() {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "服务器不存在"})
 			return
 		}
-		assets, err := collectDiskAndAssets(*srv)
+		fresh := r.URL.Query().Get("fresh") == "1"
+		assets, cachedAt, stale, err := assetsCache.GetStaleOrLoad(srv.ID, fresh, 30*time.Minute, func() (DiskAuditData, error) {
+			return collectDiskAndAssets(*srv)
+		})
 		if err != nil {
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"assets": assets})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"assets":   assets,
+			"cachedAt": cachedAt.UTC().Format(time.RFC3339),
+			"stale":    stale,
+		})
 	}))
 
 	mux.HandleFunc("POST /api/servers/{id}/docker-prune", requireAuth(func(w http.ResponseWriter, r *http.Request) {
@@ -1223,6 +1294,8 @@ func main() {
 			return
 		}
 		snapshotCache.Invalidate(srv.ID)
+		servicesCache.Invalidate(srv.ID)
+		assetsCache.Invalidate(srv.ID)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out})
 	}))
 
@@ -1316,6 +1389,9 @@ func main() {
 		wg.Wait()
 
 		snapshotCache.Invalidate(srv.ID)
+		servicesCache.Invalidate(srv.ID)
+		proxiesCache.Invalidate(srv.ID)
+		assetsCache.Invalidate(srv.ID)
 		wmu.Lock()
 		_, _ = fmt.Fprintf(w, "\n[AtlasNode] 执行完成 (exit=%d)\n", code)
 		if flusher != nil {

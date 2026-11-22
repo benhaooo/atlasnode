@@ -14,7 +14,9 @@ import {
   Trash2,
 } from 'lucide-react';
 import { api } from '../api';
+import { getTabCache, setTabCache } from '../tabCache';
 import type { FirewallData, ServerSnapshot } from '../types';
+import { formatRelativeTime } from '../utils';
 import { FirewallSkeleton } from './Skeleton';
 
 interface FirewallTabProps {
@@ -23,8 +25,10 @@ interface FirewallTabProps {
 }
 
 export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSnapshot }) => {
-  const [data, setData] = useState<FirewallData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const cachedInit = getTabCache<FirewallData>('firewall', snapshot.server.id);
+  const [data, setData] = useState<FirewallData | null>(cachedInit?.data ?? null);
+  const [cachedAt, setCachedAt] = useState<string | undefined>(cachedInit?.cachedAt);
+  const [loading, setLoading] = useState(!cachedInit);
   const [error, setError] = useState('');
   const [showLocalPorts, setShowLocalPorts] = useState(false);
   const [showRawIptables, setShowRawIptables] = useState(false);
@@ -44,12 +48,14 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
     comment: '',
   });
 
-  const load = async () => {
+  const load = async (fresh = false) => {
     setLoading(true);
     setError('');
     try {
-      const res = await api.getFirewall(snapshot.server.id);
+      const res = await api.getFirewall(snapshot.server.id, fresh);
       setData(res.firewall);
+      setCachedAt(res.cachedAt);
+      setTabCache('firewall', snapshot.server.id, res.firewall, res.cachedAt);
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载防火墙信息失败');
     } finally {
@@ -58,9 +64,15 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
   };
 
   useEffect(() => {
-    setData(null);
-    setLoading(true);
-    load();
+    const hit = getTabCache<FirewallData>('firewall', snapshot.server.id);
+    if (hit) {
+      setData(hit.data);
+      setCachedAt(hit.cachedAt);
+    } else {
+      setData(null);
+      setCachedAt(undefined);
+    }
+    load(false);
   }, [snapshot.server.id]);
 
   const handleAddRule = async (e: React.FormEvent) => {
@@ -207,6 +219,11 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          {cachedAt && (
+            <span className="text-[10px] font-mono text-slate-500 hidden sm:inline">
+              {formatRelativeTime(cachedAt)}
+            </span>
+          )}
           {data?.engine === 'ufw' && (
             <button
               onClick={handleToggleUfw}
@@ -221,7 +238,8 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
             </button>
           )}
           <button
-            onClick={load}
+            onClick={() => load(true)}
+            title="强制刷新"
             className="p-2 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-300 cursor-pointer"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-sky-400' : ''}`} />

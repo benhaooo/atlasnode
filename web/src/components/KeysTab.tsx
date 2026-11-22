@@ -13,8 +13,9 @@ import {
   X,
 } from 'lucide-react';
 import { api } from '../api';
+import { getTabCache, setTabCache } from '../tabCache';
 import type { ServerSnapshot, SshSecurityInfo } from '../types';
-import { copyToClipboard } from '../utils';
+import { copyToClipboard, formatRelativeTime } from '../utils';
 import { KeysSkeleton } from './Skeleton';
 
 interface KeysTabProps {
@@ -22,8 +23,10 @@ interface KeysTabProps {
 }
 
 export const KeysTab: React.FC<KeysTabProps> = ({ snapshot }) => {
-  const [info, setInfo] = useState<SshSecurityInfo | null>(null);
-  const [loading, setLoading] = useState(true);
+  const cachedInit = getTabCache<SshSecurityInfo>('keys', snapshot.server.id);
+  const [info, setInfo] = useState<SshSecurityInfo | null>(cachedInit?.data ?? null);
+  const [cachedAt, setCachedAt] = useState<string | undefined>(cachedInit?.cachedAt);
+  const [loading, setLoading] = useState(!cachedInit);
   const [error, setError] = useState('');
   const [adding, setAdding] = useState(false);
   const [newKey, setNewKey] = useState('');
@@ -35,12 +38,14 @@ export const KeysTab: React.FC<KeysTabProps> = ({ snapshot }) => {
     { serverId: string; serverName: string; status: 'added' | 'exists' | 'error'; message?: string }[] | null
   >(null);
 
-  const load = async () => {
+  const load = async (fresh = false) => {
     setLoading(true);
     setError('');
     try {
-      const res = await api.getKeys(snapshot.server.id);
+      const res = await api.getKeys(snapshot.server.id, fresh);
       setInfo(res);
+      setCachedAt(res.cachedAt);
+      setTabCache('keys', snapshot.server.id, res, res.cachedAt);
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载 SSH 公钥失败');
     } finally {
@@ -49,10 +54,16 @@ export const KeysTab: React.FC<KeysTabProps> = ({ snapshot }) => {
   };
 
   useEffect(() => {
-    setInfo(null);
-    setLoading(true);
+    const hit = getTabCache<SshSecurityInfo>('keys', snapshot.server.id);
+    if (hit) {
+      setInfo(hit.data);
+      setCachedAt(hit.cachedAt);
+    } else {
+      setInfo(null);
+      setCachedAt(undefined);
+    }
     setSyncReport(null);
-    load();
+    load(false);
   }, [snapshot.server.id]);
 
   const handleAdd = async (e: React.FormEvent) => {
@@ -70,7 +81,7 @@ export const KeysTab: React.FC<KeysTabProps> = ({ snapshot }) => {
       }
       setNewKey('');
       setAdding(false);
-      await load();
+      await load(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : '添加公钥失败');
     } finally {
@@ -98,7 +109,7 @@ export const KeysTab: React.FC<KeysTabProps> = ({ snapshot }) => {
     setError('');
     try {
       await api.deleteKey(snapshot.server.id, index);
-      await load();
+      await load(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除公钥失败');
     } finally {
@@ -131,6 +142,11 @@ export const KeysTab: React.FC<KeysTabProps> = ({ snapshot }) => {
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {cachedAt && (
+              <span className="text-[10px] font-mono text-slate-500 hidden sm:inline">
+                {formatRelativeTime(cachedAt)}
+              </span>
+            )}
             <button
               onClick={() => setAdding(!adding)}
               className="flex items-center gap-1 text-xs bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold px-3 py-1.5 rounded-xl cursor-pointer"
@@ -139,7 +155,8 @@ export const KeysTab: React.FC<KeysTabProps> = ({ snapshot }) => {
               <span>添加公钥</span>
             </button>
             <button
-              onClick={load}
+              onClick={() => load(true)}
+              title="强制重新拉取"
               className="p-1.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-300 cursor-pointer"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-sky-400' : ''}`} />

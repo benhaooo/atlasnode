@@ -10,8 +10,9 @@ import {
   Trash2,
 } from 'lucide-react';
 import { api } from '../api';
+import { getTabCache, setTabCache } from '../tabCache';
 import type { DiskAuditData, ServerSnapshot } from '../types';
-import { formatBytes } from '../utils';
+import { formatBytes, formatRelativeTime } from '../utils';
 import { AssetsSkeleton } from './Skeleton';
 
 interface AssetsTabProps {
@@ -25,18 +26,22 @@ export const AssetsTab: React.FC<AssetsTabProps> = ({
   onJumpFolder,
   onRefreshSnapshot,
 }) => {
-  const [data, setData] = useState<DiskAuditData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const cachedInit = getTabCache<DiskAuditData>('assets', snapshot.server.id);
+  const [data, setData] = useState<DiskAuditData | null>(cachedInit?.data ?? null);
+  const [cachedAt, setCachedAt] = useState<string | undefined>(cachedInit?.cachedAt);
+  const [loading, setLoading] = useState(!cachedInit);
   const [pruning, setPruning] = useState<string | null>(null);
   const [pruneMsg, setPruneMsg] = useState('');
   const [error, setError] = useState('');
 
-  const load = async () => {
+  const load = async (fresh = false) => {
     setLoading(true);
     setError('');
     try {
-      const res = await api.getAssets(snapshot.server.id);
+      const res = await api.getAssets(snapshot.server.id, fresh);
       setData(res.assets);
+      setCachedAt(res.cachedAt);
+      setTabCache('assets', snapshot.server.id, res.assets, res.cachedAt);
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载机内资产与磁盘分析失败');
     } finally {
@@ -45,9 +50,15 @@ export const AssetsTab: React.FC<AssetsTabProps> = ({
   };
 
   useEffect(() => {
-    setData(null);
-    setLoading(true);
-    load();
+    const hit = getTabCache<DiskAuditData>('assets', snapshot.server.id);
+    if (hit) {
+      setData(hit.data);
+      setCachedAt(hit.cachedAt);
+    } else {
+      setData(null);
+      setCachedAt(undefined);
+    }
+    load(false);
   }, [snapshot.server.id]);
 
   const handlePrune = async (target: 'images' | 'builder' | 'containers', label: string) => {
@@ -58,7 +69,7 @@ export const AssetsTab: React.FC<AssetsTabProps> = ({
     try {
       const res = await api.pruneDocker(snapshot.server.id, target);
       setPruneMsg(res.output.split('\n').pop() || '清理完成');
-      await load();
+      await load(true);
       onRefreshSnapshot();
     } catch (err) {
       setError(err instanceof Error ? err.message : '清理失败');
@@ -79,14 +90,21 @@ export const AssetsTab: React.FC<AssetsTabProps> = ({
             看清硬盘空间被谁占满、Docker 可回收空间、隐藏定时任务与已装运行环境
           </p>
         </div>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="flex items-center gap-1.5 text-xs bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-200 px-3 py-1.5 rounded-xl cursor-pointer shrink-0"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-sky-400' : ''}`} />
-          <span>重新扫描</span>
-        </button>
+        <div className="flex items-center gap-2.5 shrink-0">
+          {cachedAt && (
+            <span className="text-[11px] font-mono text-slate-500">
+              {loading ? '同步中...' : `扫描于 ${formatRelativeTime(cachedAt)}`}
+            </span>
+          )}
+          <button
+            onClick={() => load(true)}
+            disabled={loading}
+            className="flex items-center gap-1.5 text-xs bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-200 px-3 py-1.5 rounded-xl cursor-pointer shrink-0 disabled:opacity-60"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-sky-400' : ''}`} />
+            <span>重新扫描</span>
+          </button>
+        </div>
       </div>
 
       {error && (

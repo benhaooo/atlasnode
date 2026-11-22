@@ -99,10 +99,14 @@ export const api = {
     }),
   discoverTailscale: () => request<{ source: string; peers: TailscalePeer[] }>('/api/tailscale/peers'),
 
-  getServices: (id: string) =>
-    request<{ dockerAvailable: boolean; containers: DockerContainer[]; systemdServices: SystemdService[] }>(
-      `/api/servers/${id}/services`
-    ),
+  getServices: (id: string, fresh = false) =>
+    request<{
+      dockerAvailable: boolean;
+      containers: DockerContainer[];
+      systemdServices: SystemdService[];
+      cachedAt?: string;
+      stale?: boolean;
+    }>(`/api/servers/${id}/services${fresh ? '?fresh=1' : ''}`),
   dockerAction: (id: string, cid: string, action: 'start' | 'stop' | 'restart') =>
     request<{ ok: boolean }>(`/api/servers/${id}/docker/${encodeURIComponent(cid)}/${action}`, { method: 'POST' }),
   dockerRemove: (id: string, cid: string, removeVolumes = false) =>
@@ -140,7 +144,10 @@ export const api = {
       body: JSON.stringify({ config }),
     }),
 
-  getFirewall: (id: string) => request<{ firewall: FirewallData }>(`/api/servers/${id}/firewall`),
+  getFirewall: (id: string, fresh = false) =>
+    request<{ firewall: FirewallData; cachedAt?: string; stale?: boolean }>(
+      `/api/servers/${id}/firewall${fresh ? '?fresh=1' : ''}`
+    ),
   addUfwRule: (
     id: string,
     payload: { port: string; proto: 'tcp' | 'udp' | 'any'; action: 'allow' | 'deny' | 'limit'; from?: string; comment?: string }
@@ -193,7 +200,10 @@ export const api = {
   downloadUrl: (id: string, filePath: string) =>
     `/api/servers/${id}/files/download?path=${encodeURIComponent(filePath)}`,
 
-  getKeys: (id: string) => request<SshSecurityInfo>(`/api/servers/${id}/keys`),
+  getKeys: (id: string, fresh = false) =>
+    request<SshSecurityInfo & { cachedAt?: string; stale?: boolean }>(
+      `/api/servers/${id}/keys${fresh ? '?fresh=1' : ''}`
+    ),
   addKey: (id: string, publicKey: string) =>
     request<{ ok: boolean }>(`/api/servers/${id}/keys/add`, { method: 'POST', body: JSON.stringify({ publicKey }) }),
   deleteKey: (id: string, index: number) =>
@@ -204,8 +214,14 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ publicKey }) }
     ),
 
-  getProxies: (id: string) => request<{ routes: ProxyRoute[] }>(`/api/servers/${id}/proxies`),
-  getAssets: (id: string) => request<{ assets: DiskAuditData }>(`/api/servers/${id}/assets`),
+  getProxies: (id: string, fresh = false) =>
+    request<{ routes: ProxyRoute[]; cachedAt?: string; stale?: boolean }>(
+      `/api/servers/${id}/proxies${fresh ? '?fresh=1' : ''}`
+    ),
+  getAssets: (id: string, fresh = false) =>
+    request<{ assets: DiskAuditData; cachedAt?: string; stale?: boolean }>(
+      `/api/servers/${id}/assets${fresh ? '?fresh=1' : ''}`
+    ),
   pruneDocker: (id: string, target: 'images' | 'builder' | 'containers') =>
     request<{ ok: boolean; output: string }>(`/api/servers/${id}/docker-prune`, {
       method: 'POST',

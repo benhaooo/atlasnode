@@ -27,8 +27,9 @@ import {
   X,
 } from 'lucide-react';
 import { api } from '../api';
+import { getTabCache, setTabCache } from '../tabCache';
 import type { DockerContainer, DockerPort, ProxyRoute, ServerConfig, ServerSnapshot, SystemdService } from '../types';
-import { formatBytes } from '../utils';
+import { formatBytes, formatRelativeTime } from '../utils';
 
 interface ServicesTabProps {
   snapshot: ServerSnapshot;
@@ -278,17 +279,32 @@ function shortServiceLabel(c: DockerContainer, project: string): string {
   return name.replace(/-\d+$/, '');
 }
 
+type ServicesCachePayload = {
+  dockerAvailable: boolean;
+  containers: DockerContainer[];
+  systemdServices: SystemdService[];
+};
+
 export const ServicesTab: React.FC<ServicesTabProps> = ({
   snapshot,
   onJumpFolder,
   onRefreshSnapshot,
   onOpenContainerTerminal,
 }) => {
-  const [loading, setLoading] = useState(true);
-  const [dockerAvailable, setDockerAvailable] = useState(snapshot.dockerAvailable);
-  const [containers, setContainers] = useState<DockerContainer[]>(snapshot.containersPreview);
-  const [systemdServices, setSystemdServices] = useState<SystemdService[]>(snapshot.systemdHighlights);
-  const [proxyRoutes, setProxyRoutes] = useState<ProxyRoute[]>([]);
+  const cachedSvc = getTabCache<ServicesCachePayload>('services', snapshot.server.id);
+  const cachedProxy = getTabCache<ProxyRoute[]>('proxies', snapshot.server.id);
+  const [loading, setLoading] = useState(!cachedSvc);
+  const [cachedAt, setCachedAt] = useState<string | undefined>(cachedSvc?.cachedAt);
+  const [dockerAvailable, setDockerAvailable] = useState(
+    cachedSvc ? cachedSvc.data.dockerAvailable : snapshot.dockerAvailable
+  );
+  const [containers, setContainers] = useState<DockerContainer[]>(
+    cachedSvc ? cachedSvc.data.containers : snapshot.containersPreview
+  );
+  const [systemdServices, setSystemdServices] = useState<SystemdService[]>(
+    cachedSvc ? cachedSvc.data.systemdServices : snapshot.systemdHighlights
+  );
+  const [proxyRoutes, setProxyRoutes] = useState<ProxyRoute[]>(cachedProxy?.data ?? []);
   const [loadingProxies, setLoadingProxies] = useState(false);
 
   const [query, setQuery] = useState('');
@@ -321,14 +337,25 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
 
   const streamPreRef = useRef<HTMLPreElement | null>(null);
 
-  const load = async () => {
+  const load = async (fresh = false) => {
     setLoading(true);
     setError('');
     try {
-      const res = await api.getServices(snapshot.server.id);
+      const res = await api.getServices(snapshot.server.id, fresh);
       setDockerAvailable(res.dockerAvailable);
       setContainers(res.containers);
       setSystemdServices(res.systemdServices);
+      setCachedAt(res.cachedAt);
+      setTabCache<ServicesCachePayload>(
+        'services',
+        snapshot.server.id,
+        {
+          dockerAvailable: res.dockerAvailable,
+          containers: res.containers,
+          systemdServices: res.systemdServices,
+        },
+        res.cachedAt
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载服务列表失败');
     } finally {
@@ -336,11 +363,13 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
     }
   };
 
-  const loadProxies = async () => {
+  const loadProxies = async (fresh = false) => {
     setLoadingProxies(true);
     try {
-      const res = await api.getProxies(snapshot.server.id);
-      setProxyRoutes(res.routes || []);
+      const res = await api.getProxies(snapshot.server.id, fresh);
+      const routes = res.routes || [];
+      setProxyRoutes(routes);
+      setTabCache('proxies', snapshot.server.id, routes, res.cachedAt);
     } catch {
       // non-fatal
     } finally {
@@ -349,11 +378,24 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
   };
 
   useEffect(() => {
-    setProxyRoutes([]);
+    const hitSvc = getTabCache<ServicesCachePayload>('services', snapshot.server.id);
+    if (hitSvc) {
+      setDockerAvailable(hitSvc.data.dockerAvailable);
+      setContainers(hitSvc.data.containers);
+      setSystemdServices(hitSvc.data.systemdServices);
+      setCachedAt(hitSvc.cachedAt);
+    } else {
+      setDockerAvailable(snapshot.dockerAvailable);
+      setContainers(snapshot.containersPreview);
+      setSystemdServices(snapshot.systemdHighlights);
+      setCachedAt(undefined);
+    }
+    const hitProxy = getTabCache<ProxyRoute[]>('proxies', snapshot.server.id);
+    setProxyRoutes(hitProxy?.data ?? []);
     setExpandedStacks({});
     setInfraExpanded(false);
-    load();
-    loadProxies();
+    load(false);
+    loadProxies(false);
   }, [snapshot.server.id]);
 
   const toggleStack = (project: string) => {
@@ -782,7 +824,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
               <span>反代域名与证书拓扑 ({proxyRoutes.length})</span>
             </div>
             <button
-              onClick={loadProxies}
+              onClick={() => loadProxies(true)}
               disabled={loadingProxies}
               className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer"
             >
@@ -881,14 +923,24 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
           </div>
         </div>
 
-        <button
-          onClick={load}
-          disabled={loading}
-          className="flex items-center gap-1.5 text-xs bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-200 px-3 py-2 rounded-xl cursor-pointer shrink-0"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-sky-400' : ''}`} />
-          <span>刷新状态</span>
-        </button>
+        <div className="flex items-center gap-2.5 shrink-0">
+          {cachedAt && (
+            <span className="text-[11px] font-mono text-slate-500 hidden sm:inline">
+              {loading ? '同步中...' : `更新于 ${formatRelativeTime(cachedAt)}`}
+            </span>
+          )}
+          <button
+            onClick={() => {
+              load(true);
+              loadProxies(true);
+            }}
+            disabled={loading}
+            className="flex items-center gap-1.5 text-xs bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-200 px-3 py-2 rounded-xl cursor-pointer shrink-0 disabled:opacity-60"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-sky-400' : ''}`} />
+            <span>刷新状态</span>
+          </button>
+        </div>
       </div>
 
       {error && (

@@ -944,7 +944,8 @@ func collectServerSnapshot(srv ServerConfig, activeJob *ActiveNQJobInfo) ServerS
 }
 
 const servicesDetailPy = `
-import json, shutil, subprocess
+import json, os, shutil, subprocess
+from concurrent.futures import ThreadPoolExecutor
 
 def run(cmd, timeout=10):
     try:
@@ -953,11 +954,13 @@ def run(cmd, timeout=10):
         return ''
 
 docker_ok = bool(shutil.which('docker'))
-containers_raw = []
-inspect_map = {}
-stats_map = {}
 
-if docker_ok:
+def collect_docker():
+    containers_raw = []
+    inspect_map = {}
+    stats_map = {}
+    if not docker_ok:
+        return containers_raw, inspect_map, stats_map
     ids = []
     for line in run(['docker', 'ps', '-a', '--no-trunc', '--format', '{{json .}}']).splitlines():
         if not line.strip(): continue
@@ -968,127 +971,149 @@ if docker_ok:
         except Exception:
             pass
     if ids:
-        insp = run(['docker', 'inspect'] + ids, timeout=10)
-        if insp.strip():
-            try:
-                for obj in json.loads(insp):
-                    cid = obj.get('Id', '')
-                    labels = (obj.get('Config') or {}).get('Labels') or {}
-                    health = ((obj.get('State') or {}).get('Health') or {}).get('Status', '')
-                    inspect_map[cid] = {
-                        'project': labels.get('com.docker.compose.project', '') or '',
-                        'dir': labels.get('com.docker.compose.project.working_dir', '') or '',
-                        'health': health or '',
-                    }
-            except Exception:
-                pass
-        st = run(['docker', 'stats', '--no-stream', '--no-trunc', '--format', '{{.ID}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}'], timeout=12)
-        for line in st.splitlines():
-            p = line.split('\t')
-            if len(p) >= 5:
-                stats_map[p[0]] = {'cpu': p[1], 'memUsage': p[2], 'memPerc': p[3], 'netIO': p[4]}
+        def do_inspect():
+            mp = {}
+            insp = run(['docker', 'inspect'] + ids, timeout=10)
+            if insp.strip():
+                try:
+                    for obj in json.loads(insp):
+                        cid = obj.get('Id', '')
+                        labels = (obj.get('Config') or {}).get('Labels') or {}
+                        health = ((obj.get('State') or {}).get('Health') or {}).get('Status', '')
+                        mp[cid] = {
+                            'project': labels.get('com.docker.compose.project', '') or '',
+                            'dir': labels.get('com.docker.compose.project.working_dir', '') or '',
+                            'health': health or '',
+                        }
+                except Exception:
+                    pass
+            return mp
+        def do_stats():
+            mp = {}
+            st = run(['docker', 'stats', '--no-stream', '--no-trunc', '--format', '{{.ID}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}'], timeout=12)
+            for line in st.splitlines():
+                p = line.split('\t')
+                if len(p) >= 5:
+                    mp[p[0]] = {'cpu': p[1], 'memUsage': p[2], 'memPerc': p[3], 'netIO': p[4]}
+            return mp
+        with ThreadPoolExecutor(max_workers=2) as dp:
+            fi = dp.submit(do_inspect)
+            fs = dp.submit(do_stats)
+            inspect_map = fi.result()
+            stats_map = fs.result()
+    return containers_raw, inspect_map, stats_map
 
-svcs = []
-seen = set()
-skip = (
-    'systemd-', 'dbus', 'getty', 'serial-getty', 'user@', 'polkit', 'udisks', 'ModemManager',
-    'networkd-', 'unattended-', 'multipathd', 'multipath', 'irqbalance', 'packagekit', 'fwupd',
-    'accounts-', 'avahi-', 'acpid', 'atd', 'cloud-init', 'cloud-config', 'cloud-final',
-    'chrony', 'auditd', 'rsyslog', 'rpcbind', 'snapd', 'snap.', 'console-', 'plymouth',
-    'networking', 'ufw', 'apparmor', 'e2scrub', 'fstrim', 'logrotate', 'man-db', 'apt-',
-    'dpkg-', 'motd-', 'ua-', 'ubuntu-', 'sysstat', 'setvtrgb', 'kmod', 'keyboard-',
-    'blk-availability', 'lvm2-', 'dm-', 'finalrd', 'grub-', 'rc-local', 'ondemand',
-    'qemu-guest-agent', 'open-iscsi', 'iscsi', 'open-vm-tools', 'vmtoolsd', 'vgauth',
-    'thermald', 'apport', 'pollinate', 'dmesg', 'secureboot-', 'tat_agent', 'qcloud',
-    'barad_agent', 'sgagent', 'aliyun', 'aegis', 'AssistDaemon', 'waagent', 'amazon-ssm',
-    'oracle-cloud', 'google-', 'vbox', 'hv_', 'bluetooth', 'cups', 'upower', 'colord',
-    'rtkit', 'geoclue', 'boltd', 'power-profiles',
-)
-known_distro_apps = (
-    'nginx', 'caddy', 'apache2', 'httpd', 'haproxy', 'mysql', 'mysqld', 'mariadb',
-    'postgresql', 'redis', 'mongod', 'memcached', 'docker', 'tailscaled', 'xray', 'v2ray',
-    'sing-box', 'hysteria', 'mihomo', 'clash', 'frps', 'frpc', 'gost', 'snell', 'realm',
-    'shadowsocks', 'trojan', 'wg-quick', 'fail2ban',
-)
-for line in run(['systemctl', 'list-units', '--type=service', '--state=running,failed', '--no-pager', '--no-legend', '--plain']).splitlines():
-    p = line.split(None, 4)
-    if len(p) < 5: continue
-    name, _, active, sub, desc = p
-    if any(name.startswith(s) for s in skip) or '@' in name: continue
-    short = name.replace('.service', '')
-    seen.add(short)
-    svcs.append({'name': short, 'description': desc, 'activeState': active, 'subState': sub})
+def collect_systemd():
+    svcs = []
+    seen = set()
+    skip = (
+        'systemd-', 'dbus', 'getty', 'serial-getty', 'user@', 'polkit', 'udisks', 'ModemManager',
+        'networkd-', 'unattended-', 'multipathd', 'multipath', 'irqbalance', 'packagekit', 'fwupd',
+        'accounts-', 'avahi-', 'acpid', 'atd', 'cloud-init', 'cloud-config', 'cloud-final',
+        'chrony', 'auditd', 'rsyslog', 'rpcbind', 'snapd', 'snap.', 'console-', 'plymouth',
+        'networking', 'ufw', 'apparmor', 'e2scrub', 'fstrim', 'logrotate', 'man-db', 'apt-',
+        'dpkg-', 'motd-', 'ua-', 'ubuntu-', 'sysstat', 'setvtrgb', 'kmod', 'keyboard-',
+        'blk-availability', 'lvm2-', 'dm-', 'finalrd', 'grub-', 'rc-local', 'ondemand',
+        'qemu-guest-agent', 'open-iscsi', 'iscsi', 'open-vm-tools', 'vmtoolsd', 'vgauth',
+        'thermald', 'apport', 'pollinate', 'dmesg', 'secureboot-', 'tat_agent', 'qcloud',
+        'barad_agent', 'sgagent', 'aliyun', 'aegis', 'AssistDaemon', 'waagent', 'amazon-ssm',
+        'oracle-cloud', 'google-', 'vbox', 'hv_', 'bluetooth', 'cups', 'upower', 'colord',
+        'rtkit', 'geoclue', 'boltd', 'power-profiles',
+    )
+    known_distro_apps = (
+        'nginx', 'caddy', 'apache2', 'httpd', 'haproxy', 'mysql', 'mysqld', 'mariadb',
+        'postgresql', 'redis', 'mongod', 'memcached', 'docker', 'tailscaled', 'xray', 'v2ray',
+        'sing-box', 'hysteria', 'mihomo', 'clash', 'frps', 'frpc', 'gost', 'snell', 'realm',
+        'shadowsocks', 'trojan', 'wg-quick', 'fail2ban',
+    )
+    for line in run(['systemctl', 'list-units', '--type=service', '--state=running,failed', '--no-pager', '--no-legend', '--plain']).splitlines():
+        p = line.split(None, 4)
+        if len(p) < 5: continue
+        name, _, active, sub, desc = p
+        if any(name.startswith(s) for s in skip) or '@' in name: continue
+        short = name.replace('.service', '')
+        seen.add(short)
+        svcs.append({'name': short, 'description': desc, 'activeState': active, 'subState': sub})
 
-# Also include stopped user-installed services (/etc/systemd/system non-symlinks) & well-known server daemons
-import os
-cand_units = []
-try:
-    for fn in sorted(os.listdir('/etc/systemd/system')):
+    cand_units = []
+    try:
+        for fn in sorted(os.listdir('/etc/systemd/system')):
+            if not fn.endswith('.service') or '@' in fn: continue
+            full = os.path.join('/etc/systemd/system', fn)
+            if os.path.islink(full): continue
+            if any(fn.startswith(s) for s in skip): continue
+            short = fn[:-8]
+            if short not in seen:
+                cand_units.append(short)
+    except Exception:
+        pass
+    for line in run(['systemctl', 'list-unit-files', '--type=service', '--state=enabled', '--no-pager', '--no-legend']).splitlines():
+        p = line.split()
+        if not p: continue
+        fn = p[0]
         if not fn.endswith('.service') or '@' in fn: continue
-        full = os.path.join('/etc/systemd/system', fn)
-        if os.path.islink(full): continue
         if any(fn.startswith(s) for s in skip): continue
         short = fn[:-8]
-        if short not in seen:
+        if not any(short == k or short.startswith(k + '-') for k in known_distro_apps):
+            continue
+        if short not in seen and short not in cand_units:
             cand_units.append(short)
-except Exception:
-    pass
-for line in run(['systemctl', 'list-unit-files', '--type=service', '--state=enabled', '--no-pager', '--no-legend']).splitlines():
-    p = line.split()
-    if not p: continue
-    fn = p[0]
-    if not fn.endswith('.service') or '@' in fn: continue
-    if any(fn.startswith(s) for s in skip): continue
-    short = fn[:-8]
-    if not any(short == k or short.startswith(k + '-') for k in known_distro_apps):
-        continue
-    if short not in seen and short not in cand_units:
-        cand_units.append(short)
 
-for short in cand_units[:30]:
-    info = run(['systemctl', 'show', short + '.service', '--property=ActiveState,SubState,Description,Type,LoadState', '--no-pager'])
-    kv = {}
-    for ln in info.splitlines():
-        if '=' in ln:
-            k, v = ln.split('=', 1)
-            kv[k] = v
-    if kv.get('LoadState') != 'loaded': continue
-    if kv.get('Type') == 'oneshot': continue
-    act = kv.get('ActiveState', 'inactive')
-    if act == 'active': continue
-    seen.add(short)
-    svcs.append({
-        'name': short,
-        'description': kv.get('Description', '') or short,
-        'activeState': act,
-        'subState': kv.get('SubState', 'dead'),
-    })
+    if cand_units:
+        # Single batched systemctl show instead of N serial subprocess calls
+        batch_units = [u + '.service' for u in cand_units[:30]]
+        batch_out = run(['systemctl', 'show', '--property=Id,ActiveState,SubState,Description,Type,LoadState', '--no-pager'] + batch_units, timeout=8)
+        cur = {}
+        for ln in batch_out.splitlines() + ['']:
+            if not ln.strip():
+                uid = cur.get('Id', '')
+                if uid.endswith('.service'):
+                    short = uid[:-8]
+                    if cur.get('LoadState') == 'loaded' and cur.get('Type') != 'oneshot' and cur.get('ActiveState', 'inactive') != 'active' and short not in seen:
+                        seen.add(short)
+                        svcs.append({
+                            'name': short,
+                            'description': cur.get('Description', '') or short,
+                            'activeState': cur.get('ActiveState', 'inactive'),
+                            'subState': cur.get('SubState', 'dead'),
+                        })
+                cur = {}
+            elif '=' in ln:
+                k, v = ln.split('=', 1)
+                cur[k] = v
 
-if svcs:
-    unit_names = [s['name'] + '.service' for s in svcs]
-    meta_out = run(['systemctl', 'show', '--property=Id,PartOf,WorkingDirectory', '--no-pager'] + unit_names, timeout=8)
-    meta_map = {}
-    cur = {}
-    for ln in meta_out.splitlines() + ['']:
-        if not ln.strip():
-            uid = cur.get('Id', '')
-            if uid.endswith('.service'):
-                meta_map[uid[:-8]] = cur
-            cur = {}
-        elif '=' in ln:
-            k, v = ln.split('=', 1)
-            cur[k] = v
-    sys_targets = ('multi-user.', 'graphical.', 'network', 'sysinit.', 'basic.', 'default.', 'shutdown.')
-    for s in svcs:
-        m = meta_map.get(s['name'], {})
-        po = (m.get('PartOf') or '').strip()
-        wd = (m.get('WorkingDirectory') or '').strip().rstrip('/')
-        if po:
-            cands = [t for t in po.split() if t.endswith('.target') and not t.startswith(sys_targets)]
-            if cands:
-                s['partOf'] = cands[0]
-        if wd and wd != '/':
-            s['workingDir'] = wd
+    if svcs:
+        unit_names = [s['name'] + '.service' for s in svcs]
+        meta_out = run(['systemctl', 'show', '--property=Id,PartOf,WorkingDirectory', '--no-pager'] + unit_names, timeout=8)
+        meta_map = {}
+        cur = {}
+        for ln in meta_out.splitlines() + ['']:
+            if not ln.strip():
+                uid = cur.get('Id', '')
+                if uid.endswith('.service'):
+                    meta_map[uid[:-8]] = cur
+                cur = {}
+            elif '=' in ln:
+                k, v = ln.split('=', 1)
+                cur[k] = v
+        sys_targets = ('multi-user.', 'graphical.', 'network', 'sysinit.', 'basic.', 'default.', 'shutdown.')
+        for s in svcs:
+            m = meta_map.get(s['name'], {})
+            po = (m.get('PartOf') or '').strip()
+            wd = (m.get('WorkingDirectory') or '').strip().rstrip('/')
+            if po:
+                cands = [t for t in po.split() if t.endswith('.target') and not t.startswith(sys_targets)]
+                if cands:
+                    s['partOf'] = cands[0]
+            if wd and wd != '/':
+                s['workingDir'] = wd
+    return svcs
+
+with ThreadPoolExecutor(max_workers=2) as tp:
+    fd = tp.submit(collect_docker)
+    fs = tp.submit(collect_systemd)
+    containers_raw, inspect_map, stats_map = fd.result()
+    svcs = fs.result()
 
 print(json.dumps({'dockerAvailable': docker_ok, 'containersRaw': containers_raw, 'inspectMap': inspect_map, 'statsMap': stats_map, 'systemdServices': svcs}))
 `

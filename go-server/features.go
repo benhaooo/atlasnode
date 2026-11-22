@@ -199,6 +199,8 @@ def run(cmd, timeout=12):
         return ''
 
 import time
+from concurrent.futures import ThreadPoolExecutor
+
 skip_top = {'proc', 'sys', 'dev', 'run', 'tmp', 'snap', 'lost+found', 'mnt', 'media'}
 priority_order = ['var', 'data', 'opt', 'home', 'root', 'srv', 'usr', 'etc', 'boot']
 root_dev = os.stat('/').st_dev
@@ -228,13 +230,12 @@ cand_dirs.sort(key=dir_rank)
 
 # Probe GNU du vs BusyBox du once
 gnu_du = subprocess.run(['du', '-x', '-B1', '--max-depth=0', '/etc'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).returncode == 0
-
-top_map = {}
 du_deadline = time.monotonic() + 28.0
-for d in cand_dirs:
+
+def scan_dir(d):
     rem = du_deadline - time.monotonic()
     if rem < 1.5:
-        break
+        return []
     per_timeout = min(12.0, rem)
     if gnu_du:
         out = run(['du', '-x', '-B1', '--max-depth=1', d], timeout=per_timeout)
@@ -242,6 +243,7 @@ for d in cand_dirs:
     else:
         out = run(['du', '-x', '-k', '-d', '1', d], timeout=per_timeout)
         mult = 1024
+    res = []
     for line in out.splitlines():
         parts = line.split('\t', 1)
         if len(parts) != 2:
@@ -253,98 +255,126 @@ for d in cand_dirs:
         p = parts[1].strip()
         if not p or p == '/' or sz < 20 * 1024 * 1024:
             continue
-        top_map[p] = sz
+        res.append((p, sz))
+    return res
+
+def collect_docker_df():
+    items = []
+    if shutil.which('docker'):
+        out = run(['docker', 'system', 'df', '--format', '{{json .}}'], timeout=10)
+        for line in out.splitlines():
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+                items.append({
+                    'type': item.get('Type', ''),
+                    'total': str(item.get('TotalCount', '')),
+                    'active': str(item.get('Active', '')),
+                    'size': item.get('Size', ''),
+                    'reclaimable': item.get('Reclaimable', ''),
+                })
+            except Exception:
+                pass
+    return items
+
+def collect_crontabs():
+    crons = []
+    def parse_cron(text, src, has_user_col=False):
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line or line.startswith('#') or '=' in line.split()[0]:
+                continue
+            parts = line.split()
+            if line.startswith('@'):
+                if has_user_col and len(parts) >= 3:
+                    crons.append({'source': src, 'schedule': parts[0], 'command': ' '.join(parts[2:])})
+                elif len(parts) >= 2:
+                    crons.append({'source': src, 'schedule': parts[0], 'command': ' '.join(parts[1:])})
+            else:
+                if has_user_col and len(parts) >= 7:
+                    crons.append({'source': src, 'schedule': ' '.join(parts[:5]), 'command': ' '.join(parts[6:])})
+                elif len(parts) >= 6:
+                    crons.append({'source': src, 'schedule': ' '.join(parts[:5]), 'command': ' '.join(parts[5:])})
+    parse_cron(run(['crontab', '-l']), 'root crontab', False)
+    for u in ('ubuntu', 'www-data'):
+        out = run(['crontab', '-u', u, '-l'])
+        if out:
+            parse_cron(out, f'{u} crontab', False)
+    for f in sorted(glob.glob('/etc/cron.d/*')):
+        if os.path.isfile(f):
+            try:
+                parse_cron(open(f, errors='replace').read(), f, True)
+            except Exception:
+                pass
+    return crons[:30]
+
+def collect_timers():
+    items = []
+    t_out = run(['systemctl', 'list-timers', '--no-pager', '--no-legend', '--plain'])
+    for line in t_out.splitlines():
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        unit = parts[-2]
+        activates = parts[-1]
+        next_run = ' '.join(parts[:3]) if parts[0] != '-' else 'inactive'
+        items.append({'name': unit.replace('.timer', ''), 'next': next_run, 'activates': activates})
+    return items[:15]
+
+def collect_runtimes():
+    items = []
+    checks = [
+        ('Docker', ['docker', '--version']),
+        ('Node.js', ['node', '-v']),
+        ('Python3', ['python3', '--version']),
+        ('Go', ['go', 'version']),
+        ('Nginx', ['nginx', '-v']),
+        ('Caddy', ['caddy', 'version']),
+        ('Tailscale', ['tailscale', 'version']),
+        ('Git', ['git', '--version']),
+    ]
+    for name, cmd in checks:
+        if not shutil.which(cmd[0]):
+            continue
+        try:
+            r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=3)
+            ver = (r.stdout.splitlines()[0] if r.stdout else '').strip()
+            if ver:
+                items.append({'name': name, 'version': ver[:60]})
+        except Exception:
+            pass
+    return items
+
+# Cap concurrency at 3 workers so low-IOPS VPSes stay responsive while running 2-3x faster
+with ThreadPoolExecutor(max_workers=3) as pool:
+    f_docker = pool.submit(collect_docker_df)
+    f_crons = pool.submit(collect_crontabs)
+    f_timers = pool.submit(collect_timers)
+    f_runtimes = pool.submit(collect_runtimes)
+    f_dirs = [pool.submit(scan_dir, d) for d in cand_dirs]
+
+    top_map = {}
+    for fd in f_dirs:
+        try:
+            for p, sz in fd.result():
+                top_map[p] = sz
+        except Exception:
+            pass
+    docker_df = f_docker.result()
+    crontabs = f_crons.result()
+    timers = f_timers.result()
+    runtimes = f_runtimes.result()
 
 top_dirs = [{'path': k, 'bytes': v} for k, v in top_map.items()]
 top_dirs.sort(key=lambda x: x['bytes'], reverse=True)
 top_dirs = top_dirs[:14]
 
-docker_df = []
-if shutil.which('docker'):
-    out = run(['docker', 'system', 'df', '--format', '{{json .}}'], timeout=10)
-    for line in out.splitlines():
-        if not line.strip():
-            continue
-        try:
-            item = json.loads(line)
-            docker_df.append({
-                'type': item.get('Type', ''),
-                'total': str(item.get('TotalCount', '')),
-                'active': str(item.get('Active', '')),
-                'size': item.get('Size', ''),
-                'reclaimable': item.get('Reclaimable', ''),
-            })
-        except Exception:
-            pass
-
-crontabs = []
-def parse_cron(text, src, has_user_col=False):
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith('#') or '=' in line.split()[0]:
-            continue
-        parts = line.split()
-        if line.startswith('@'):
-            if has_user_col and len(parts) >= 3:
-                crontabs.append({'source': src, 'schedule': parts[0], 'command': ' '.join(parts[2:])})
-            elif len(parts) >= 2:
-                crontabs.append({'source': src, 'schedule': parts[0], 'command': ' '.join(parts[1:])})
-        else:
-            if has_user_col and len(parts) >= 7:
-                crontabs.append({'source': src, 'schedule': ' '.join(parts[:5]), 'command': ' '.join(parts[6:])})
-            elif len(parts) >= 6:
-                crontabs.append({'source': src, 'schedule': ' '.join(parts[:5]), 'command': ' '.join(parts[5:])})
-
-parse_cron(run(['crontab', '-l']), 'root crontab', False)
-for u in ('ubuntu', 'www-data'):
-    out = run(['crontab', '-u', u, '-l'])
-    if out:
-        parse_cron(out, f'{u} crontab', False)
-for f in sorted(glob.glob('/etc/cron.d/*')):
-    if os.path.isfile(f):
-        try:
-            parse_cron(open(f, errors='replace').read(), f, True)
-        except Exception:
-            pass
-
-timers = []
-t_out = run(['systemctl', 'list-timers', '--no-pager', '--no-legend', '--plain'])
-for line in t_out.splitlines():
-    parts = line.split()
-    if len(parts) < 4:
-        continue
-    unit = parts[-2]
-    activates = parts[-1]
-    next_run = ' '.join(parts[:3]) if parts[0] != '-' else 'inactive'
-    timers.append({'name': unit.replace('.timer', ''), 'next': next_run, 'activates': activates})
-
-runtimes = []
-checks = [
-    ('Docker', ['docker', '--version']),
-    ('Node.js', ['node', '-v']),
-    ('Python3', ['python3', '--version']),
-    ('Go', ['go', 'version']),
-    ('Nginx', ['nginx', '-v']),
-    ('Caddy', ['caddy', 'version']),
-    ('Tailscale', ['tailscale', 'version']),
-    ('Git', ['git', '--version']),
-]
-for name, cmd in checks:
-    if not shutil.which(cmd[0]):
-        continue
-    try:
-        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=3)
-        ver = (r.stdout.splitlines()[0] if r.stdout else '').strip()
-        if ver:
-            runtimes.append({'name': name, 'version': ver[:60]})
-    except Exception:
-        pass
-
 print(json.dumps({
     'topDirs': top_dirs,
     'dockerDf': docker_df,
-    'crontabs': crontabs[:30],
-    'timers': timers[:15],
+    'crontabs': crontabs,
+    'timers': timers,
     'runtimes': runtimes,
 }))
 `

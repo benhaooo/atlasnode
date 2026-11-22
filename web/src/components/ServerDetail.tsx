@@ -303,6 +303,22 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                   </>
                 )}
               </div>
+
+              {(snapshot.server.notes || snapshot.server.tags.length > 0) && (
+                <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 mt-1.5 text-[11px] text-slate-400">
+                  {snapshot.server.notes && (
+                    <span className="text-slate-400">{snapshot.server.notes}</span>
+                  )}
+                  {snapshot.server.tags.map((tag) => (
+                    <span
+                      key={tag}
+                      className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-white/[0.04] text-slate-400"
+                    >
+                      #{tag}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Right Utility & Action Toolbar (grouped pill + ghost icons) */}

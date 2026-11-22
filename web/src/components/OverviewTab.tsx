@@ -68,6 +68,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   const [dbHistory, setDbHistory] = useState<MetricHistoryResult | null>(null);
   const [editingTrafficPlan, setEditingTrafficPlan] = useState(false);
   const [hoveredDayIdx, setHoveredDayIdx] = useState<number | null>(null);
+  const [showAllUnlocks, setShowAllUnlocks] = useState(false);
 
   useEffect(() => {
     if (chartRange === 'live' || chartRange === 'daily') return;
@@ -111,30 +112,29 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   const bwUtilPct = bwCapMbps > 0 ? Math.min(100, (liveMaxMbps / bwCapMbps) * 100) : 0;
   const projectedOverQuota = Boolean(ts && ts.quotaBytes > 0 && ts.projectedBytes > ts.quotaBytes);
 
-  // Pick top 6 most meaningful unlock items (prioritizing key AI/streaming services)
-  const prioritizedUnlocks = nq
-    ? [...nq.summary.unlocks]
-        .sort((a, b) => {
-          const pa = PRIORITY_UNLOCKS.indexOf(a.service.toLowerCase());
-          const pb = PRIORITY_UNLOCKS.indexOf(b.service.toLowerCase());
-          const sa = pa >= 0 ? pa : 99;
-          const sb = pb >= 0 ? pb : 99;
-          return sa - sb;
-        })
-        .slice(0, 6)
+  // Sort unlocks prioritizing key AI/streaming services, expandable inline to view all
+  const sortedUnlocks = nq
+    ? [...nq.summary.unlocks].sort((a, b) => {
+        const pa = PRIORITY_UNLOCKS.indexOf(a.service.toLowerCase());
+        const pb = PRIORITY_UNLOCKS.indexOf(b.service.toLowerCase());
+        const sa = pa >= 0 ? pa : 99;
+        const sb = pb >= 0 ? pb : 99;
+        return sa - sb;
+      })
     : [];
+  const visibleUnlocks = showAllUnlocks ? sortedUnlocks : sortedUnlocks.slice(0, 8);
 
-  // Deduplicate routes by ISP for a crisp 1-line summary
+  // Deduplicate routes by city+ISP for a crisp summary with latency preserved
   const compactRoutes = nq
     ? (() => {
         const seen = new Set<string>();
         const out: typeof nq.summary.network.routes = [];
         for (const r of nq.summary.network.routes) {
-          const key = r.isp || r.city;
+          const key = `${r.city}-${r.isp}`;
           if (seen.has(key)) continue;
           seen.add(key);
           out.push(r);
-          if (out.length >= 3) break;
+          if (out.length >= 6) break;
         }
         return out;
       })()
@@ -187,17 +187,20 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
       {m && (
         <section className="bg-white/[0.025] border border-white/[0.06] rounded-2xl grid grid-cols-2 lg:grid-cols-4 divide-y lg:divide-y-0 lg:divide-x divide-white/[0.05] overflow-hidden">
           {/* CPU */}
-          <div className="px-4 sm:px-5 py-3.5 sm:py-4 flex flex-col justify-between gap-2.5">
-            <div className="flex items-center justify-between text-[11px] text-slate-400">
+          <div className="px-4 sm:px-5 py-3.5 sm:py-4 flex flex-col justify-between gap-2">
+            <div className="flex items-center justify-between gap-2 text-[11px] text-slate-400">
               <span>CPU</span>
-              <span className="font-mono text-[10px] text-slate-500">
-                {m.cpuCores || snapshot.cpuCores}C · Load {m.loadAvg[0].toFixed(2)}
+              <span className="font-mono text-[10px] text-slate-500 truncate" title={snapshot.cpuModel || undefined}>
+                {m.cpuCores || snapshot.cpuCores} 核
               </span>
             </div>
             <div className="flex items-baseline justify-between gap-2">
               <span className={`text-xl sm:text-2xl font-mono font-semibold tracking-tight ${usageTextColor(m.cpuPercent)}`}>
                 {m.cpuPercent.toFixed(1)}
                 <span className="text-xs font-normal text-slate-500 ml-0.5">%</span>
+              </span>
+              <span className="text-[10px] font-mono text-slate-500 truncate" title="1分钟 / 5分钟 / 15分钟系统负载">
+                Load {m.loadAvg[0].toFixed(2)} / {m.loadAvg[1].toFixed(2)} / {m.loadAvg[2].toFixed(2)}
               </span>
             </div>
             <div className="h-[3px] bg-white/[0.06] rounded-full overflow-hidden">
@@ -208,12 +211,12 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
             </div>
           </div>
 
-          {/* Memory */}
-          <div className="px-4 sm:px-5 py-3.5 sm:py-4 flex flex-col justify-between gap-2.5 border-l border-white/[0.05] lg:border-l-0">
-            <div className="flex items-center justify-between text-[11px] text-slate-400">
+          {/* Memory + Full Swap Readout */}
+          <div className="px-4 sm:px-5 py-3.5 sm:py-4 flex flex-col justify-between gap-2 border-l border-white/[0.05] lg:border-l-0">
+            <div className="flex items-center justify-between gap-2 text-[11px] text-slate-400">
               <span>内存</span>
-              <span className="font-mono text-[10px] text-slate-500">
-                {formatBytes(m.memUsedBytes)} / {formatBytes(m.memTotalBytes, 0)}
+              <span className="font-mono text-[10px] text-slate-500 truncate">
+                {formatBytes(m.memUsedBytes)} / {formatBytes(m.memTotalBytes, 1)}
               </span>
             </div>
             <div className="flex items-baseline justify-between gap-2">
@@ -221,11 +224,11 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                 {m.memPercent.toFixed(0)}
                 <span className="text-xs font-normal text-slate-500 ml-0.5">%</span>
               </span>
-              {m.swapTotalBytes > 0 && m.swapUsedBytes > 0 && (
-                <span className="text-[10px] font-mono text-slate-500">
-                  Swap {formatBytes(m.swapUsedBytes, 0)}
-                </span>
-              )}
+              <span className="text-[10px] font-mono text-slate-500 truncate">
+                {m.swapTotalBytes > 0
+                  ? `Swap ${formatBytes(m.swapUsedBytes, 1)} / ${formatBytes(m.swapTotalBytes, 1)}`
+                  : '未分配 Swap'}
+              </span>
             </div>
             <div className="h-[3px] bg-white/[0.06] rounded-full overflow-hidden">
               <div
@@ -236,11 +239,11 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           </div>
 
           {/* Root Disk */}
-          <div className="px-4 sm:px-5 py-3.5 sm:py-4 flex flex-col justify-between gap-2.5">
-            <div className="flex items-center justify-between text-[11px] text-slate-400">
-              <span>磁盘 /</span>
-              <span className="font-mono text-[10px] text-slate-500">
-                {formatBytes(m.diskRootUsedBytes, 0)} / {formatBytes(m.diskRootTotalBytes, 0)}
+          <div className="px-4 sm:px-5 py-3.5 sm:py-4 flex flex-col justify-between gap-2">
+            <div className="flex items-center justify-between gap-2 text-[11px] text-slate-400">
+              <span>根分区 /</span>
+              <span className="font-mono text-[10px] text-slate-500 truncate">
+                {formatBytes(m.diskRootUsedBytes, 1)} / {formatBytes(m.diskRootTotalBytes, 1)}
               </span>
             </div>
             <div className="flex items-baseline justify-between gap-2">
@@ -248,8 +251,8 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                 {m.diskRootPercent.toFixed(0)}
                 <span className="text-xs font-normal text-slate-500 ml-0.5">%</span>
               </span>
-              <span className="text-[10px] font-mono text-slate-500">
-                剩余 {formatBytes(Math.max(0, m.diskRootTotalBytes - m.diskRootUsedBytes), 0)}
+              <span className="text-[10px] font-mono text-slate-500 truncate">
+                可用 {formatBytes(Math.max(0, m.diskRootTotalBytes - m.diskRootUsedBytes), 1)}
               </span>
             </div>
             <div className="h-[3px] bg-white/[0.06] rounded-full overflow-hidden">
@@ -261,15 +264,18 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           </div>
 
           {/* Monthly Traffic & Quota */}
-          <div className="px-4 sm:px-5 py-3.5 sm:py-4 flex flex-col justify-between gap-2.5 border-l border-white/[0.05] lg:border-l-0">
+          <div className="px-4 sm:px-5 py-3.5 sm:py-4 flex flex-col justify-between gap-2 border-l border-white/[0.05] lg:border-l-0">
             <div className="flex items-center justify-between gap-1 text-[11px] text-slate-400">
               <span className="truncate">
-                本月流量{ts && ts.quotaBytes > 0 ? ` · 剩${ts.daysRemaining}天` : ''}
+                本月流量
+                {ts && ts.quotaBytes > 0
+                  ? ` · ${billingModeLabel(ts.billingMode)} · 剩${ts.daysRemaining}天`
+                  : ''}
               </span>
               <button
                 type="button"
                 onClick={() => setEditingTrafficPlan(true)}
-                title="配置标称带宽与月流量套餐"
+                title="配置标称带宽、月流量配额与已用校准"
                 className="inline-flex items-center gap-1 text-[10px] text-slate-400 hover:text-sky-300 transition-colors cursor-pointer shrink-0"
               >
                 <SlidersHorizontal className="w-3 h-3" />
@@ -285,7 +291,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                     <span className="text-xs font-normal text-slate-500 ml-0.5">%</span>
                   </span>
                   <span className="text-[10px] font-mono text-slate-400 truncate">
-                    {formatBytes(ts.billedBytes)} / {formatBytes(ts.quotaBytes, 0)}
+                    {formatBytes(ts.billedBytes, 1)} / {formatBytes(ts.quotaBytes, 0)}
                   </span>
                 </div>
                 <div className="h-[3px] bg-white/[0.06] rounded-full overflow-hidden">
@@ -553,7 +559,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
             </div>
           )}
 
-          {/* Subtle Footer Strip: Today / Projection / Over-Quota Hint */}
+          {/* Subtle Footer Strip: Today / Cycle Breakdown / Projection */}
           {ts && (
             <div className="pt-3.5 border-t border-white/[0.05] flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 text-[11px] font-mono text-slate-500">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -561,13 +567,17 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                   今日 <span className="text-slate-300">↓{formatBytes(ts.todayRxBytes)}</span>{' '}
                   <span className="text-slate-400">↑{formatBytes(ts.todayTxBytes)}</span>
                 </span>
+                <span>
+                  本周期采集 <span className="text-emerald-400/90">↓{formatBytes(ts.cycleRxBytes)}</span>{' '}
+                  <span className="text-sky-400/90">↑{formatBytes(ts.cycleTxBytes)}</span>
+                </span>
+                {ts.baselineBytes > 0 && (
+                  <span className="text-sky-400/80">含校准 +{formatBytes(ts.baselineBytes)}</span>
+                )}
                 {bwCapMbps > 0 && chartRange === 'live' && (
                   <span>
                     带宽占比 <span className="text-sky-300">{bwUtilPct.toFixed(0)}%</span>
                   </span>
-                )}
-                {ts.baselineBytes > 0 && (
-                  <span className="text-sky-400/80">含校准 +{formatBytes(ts.baselineBytes)}</span>
                 )}
               </div>
 
@@ -782,18 +792,24 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
           {nq ? (
             <div className="space-y-4">
-              {/* Clean 3-column key-value strip (dividers, no sub-boxes) */}
+              {/* Clean 3-column key-value strip with full org / usageType subtitles */}
               <div className="grid grid-cols-3 divide-x divide-white/[0.06]">
                 <div className="pr-3 min-w-0">
                   <div className="text-[10px] text-slate-500">归属 / ASN</div>
                   <div className="text-xs font-medium text-slate-100 mt-1 truncate">
                     {countryFlag(nq.summary.ip.country)} {nq.summary.ip.asn || '—'}
                   </div>
+                  <div className="text-[10px] text-slate-500 truncate mt-0.5" title={nq.summary.ip.org || undefined}>
+                    {nq.summary.ip.org || nq.summary.ip.country || '—'}
+                  </div>
                 </div>
                 <div className="px-3 min-w-0">
                   <div className="text-[10px] text-slate-500">IP 性质</div>
                   <div className="text-xs font-medium text-slate-100 mt-1 truncate">
                     {nq.summary.ip.ipType || '未知'}
+                  </div>
+                  <div className="text-[10px] text-slate-500 truncate mt-0.5">
+                    {nq.summary.ip.usageType || '—'}
                   </div>
                 </div>
                 <div className="pl-3 min-w-0">
@@ -806,60 +822,79 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                         : nq.summary.ip.riskLevel === 'high'
                           ? '高风险'
                           : '待评估'}
+                  </div>
+                  <div className="text-[10px] font-mono text-slate-500 truncate mt-0.5">
                     {nq.summary.ip.riskScore !== null && nq.summary.ip.riskScore !== undefined
-                      ? ` (${nq.summary.ip.riskScore})`
-                      : ''}
+                      ? `评分 ${nq.summary.ip.riskScore}`
+                      : '—'}
                   </div>
                 </div>
               </div>
 
-              {/* Compact Top Unlocks (max 6 + "+N") */}
-              {prioritizedUnlocks.length > 0 && (
+              {/* Compact Unlocks with regions preserved + inline expand */}
+              {visibleUnlocks.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1.5">
-                  {prioritizedUnlocks.map((u) => {
+                  {visibleUnlocks.map((u) => {
                     const ok = u.status === 'native' || u.status === 'unlocked' || u.status === 'dns';
                     return (
                       <span
                         key={u.service}
+                        title={u.detail || u.statusText || u.status}
                         className={`text-[11px] px-2 py-0.5 rounded-md font-mono ${
                           ok
                             ? 'bg-emerald-500/[0.08] text-emerald-300'
-                            : u.status === 'blocked'
-                              ? 'bg-rose-500/[0.07] text-rose-300/80'
-                              : 'bg-white/[0.04] text-slate-400'
+                            : u.status === 'app_only'
+                              ? 'bg-amber-500/[0.08] text-amber-300'
+                              : u.status === 'blocked'
+                                ? 'bg-rose-500/[0.07] text-rose-300/80'
+                                : 'bg-white/[0.04] text-slate-400'
                         }`}
                       >
                         {countryFlag(u.region)} {u.service}
+                        {u.region ? ` ${u.region}` : ''}
                       </span>
                     );
                   })}
-                  {nq.summary.unlocks.length > prioritizedUnlocks.length && (
+                  {sortedUnlocks.length > 8 && (
                     <button
-                      onClick={() => onNavigateTab('nodequality')}
+                      type="button"
+                      onClick={() => setShowAllUnlocks((v) => !v)}
                       className="text-[11px] font-mono text-slate-500 hover:text-sky-300 px-1.5 cursor-pointer"
                     >
-                      +{nq.summary.unlocks.length - prioritizedUnlocks.length}
+                      {showAllUnlocks ? '收起' : `+${sortedUnlocks.length - 8} 项`}
                     </button>
                   )}
                 </div>
               )}
 
-              {/* Distilled 1-line Three-ISP Routes + Timestamp */}
-              <div className="pt-3 border-t border-white/[0.05] flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono text-slate-500">
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  {compactRoutes.map((r, i) => (
-                    <span key={i}>
-                      {r.isp || r.city}{' '}
-                      <span className="text-sky-300">{r.lineType}</span>
-                    </span>
-                  ))}
-                  {compactRoutes.length === 0 && (
-                    <span>上次质检 {formatRelativeTime(nq.finishedAt || nq.startedAt)}</span>
+              {/* Distilled Three-ISP Routes with city + latency + official report link */}
+              <div className="pt-3 border-t border-white/[0.05] space-y-2 text-[11px] font-mono text-slate-500">
+                {compactRoutes.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    {compactRoutes.map((r, i) => (
+                      <span key={i}>
+                        {r.city}
+                        {r.isp}{' '}
+                        <span className="text-sky-300">{r.lineType}</span>
+                        {r.latencyMs ? <span className="text-slate-400 ml-1">{r.latencyMs}ms</span> : null}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-center justify-between gap-2 text-[10px]">
+                  <span>上次质检 {formatRelativeTime(nq.finishedAt || nq.startedAt)}</span>
+                  {nq.reportUrl && (
+                    <a
+                      href={nq.reportUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sky-400 hover:text-sky-300 inline-flex items-center gap-1"
+                    >
+                      <span>官方报告</span>
+                      <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
                   )}
                 </div>
-                {compactRoutes.length > 0 && (
-                  <span className="text-[10px]">{formatRelativeTime(nq.finishedAt || nq.startedAt)}</span>
-                )}
               </div>
             </div>
           ) : (
@@ -934,7 +969,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
               <span className="font-mono text-[10px]">CPU · 内存</span>
             </div>
             <div className="space-y-1">
-              {(m?.topProcesses || []).slice(0, 4).map((proc) => {
+              {(m?.topProcesses || []).slice(0, 5).map((proc) => {
                 const barWidth = Math.min(100, Math.max(0, proc.cpu));
                 return (
                   <div
@@ -976,7 +1011,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         >
           <span className="flex items-center gap-1.5">
             {showSpecs ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-            <span>硬件规格 · 磁盘与网卡明细{snapshot.server.notes ? ' · 备注' : ''}</span>
+            <span>硬件规格 · 磁盘挂载与网卡明细</span>
           </span>
           <span className="text-[11px] font-mono text-slate-600 hidden sm:inline truncate max-w-md">
             {snapshot.cpuModel || 'CPU'} · {snapshot.arch} · {snapshot.kernel}

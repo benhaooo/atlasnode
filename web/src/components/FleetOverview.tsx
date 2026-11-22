@@ -204,6 +204,14 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
               stacks.set(key, (stacks.get(key) || 0) + 1);
             }
             const stackEntries = Array.from(stacks.entries());
+            const KEY_UNLOCKS = ['chatgpt', 'openai', 'claude', 'gemini', 'netflix', 'youtube', 'disney+', 'tiktok'];
+            const keyUnlocks = (nq?.summary.unlocks || [])
+              .filter(
+                (u) =>
+                  (u.status === 'native' || u.status === 'unlocked' || u.status === 'dns') &&
+                  KEY_UNLOCKS.includes(u.service.toLowerCase())
+              )
+              .slice(0, 4);
 
             return (
               <div
@@ -253,6 +261,11 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
                     {snap.server.role && (
                       <div className="text-xs text-slate-400 truncate pl-4">
                         {snap.server.role}
+                      </div>
+                    )}
+                    {snap.server.notes && (
+                      <div className="text-[11px] text-slate-500 truncate pl-4" title={snap.server.notes}>
+                        {snap.server.notes}
                       </div>
                     )}
 
@@ -339,9 +352,14 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
                         </span>
                         <span className="font-mono">公网 {snap.firewallSummary.publicPortsCount} 端口</span>
                         {snap.networkSummary && snap.networkSummary.grade !== 'collecting' && (
-                          <span className="inline-flex items-center gap-1.5 text-slate-400">
+                          <span className="inline-flex items-center gap-1.5 text-slate-400 font-mono">
                             <span className={`w-1.5 h-1.5 rounded-full ${netDotColor(snap.networkSummary.grade)}`} />
-                            <span>丢包 {snap.networkSummary.maxLossPct}%</span>
+                            <span>
+                              丢包 {snap.networkSummary.maxLossPct}%
+                              {snap.networkSummary.peakDeltaMs !== undefined
+                                ? ` · 高峰 ${snap.networkSummary.peakDeltaMs >= 0 ? '+' : ''}${snap.networkSummary.peakDeltaMs}ms`
+                                : ''}
+                            </span>
                           </span>
                         )}
                       </div>
@@ -418,6 +436,18 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
                             </span>
                           )}
                         </div>
+                        {keyUnlocks.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {keyUnlocks.map((u) => (
+                              <span
+                                key={u.service}
+                                className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/[0.08] text-emerald-300/90"
+                              >
+                                {countryFlag(u.region)} {u.service}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </>
                     ) : (
                       <div className="text-xs text-rose-400/90">

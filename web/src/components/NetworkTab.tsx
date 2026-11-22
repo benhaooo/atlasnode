@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   Check,
@@ -208,6 +208,8 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
   const [burstResults, setBurstResults] = useState<{ items: NetworkBurstItem[]; testedAt: string } | null>(null);
   const [chartMode, setChartMode] = useState<'single' | 'multi'>('single');
   const [selectedTargetId, setSelectedTargetId] = useState<string>('');
+  const [chartHoverRatio, setChartHoverRatio] = useState<number | null>(null);
+  const chartPlotRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState('');
 
   // Target manager modal
@@ -533,6 +535,63 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
 
     return { W, H, padL, padR, padT, padB, innerW, innerH, minTs, maxTs, maxMs, xOf, yOf, peakBands, allSeries };
   }, [monitor, selectedSummary, chartMode]);
+
+  const chartHover = useMemo(() => {
+    if (!chartData || chartHoverRatio === null) return null;
+    const targetTs = chartData.minTs + chartHoverRatio * (chartData.maxTs - chartData.minTs);
+    const items: {
+      id: string;
+      name: string;
+      color: string;
+      point: NetworkTargetSummary['points'][number];
+      xPct: number;
+      yPct: number | null;
+    }[] = [];
+
+    let snapTs = targetTs;
+    let bestSnapDist = Infinity;
+
+    chartData.allSeries.forEach((series, sIdx) => {
+      if (series.points.length === 0) return;
+      let best = series.points[0];
+      let bestDist = Math.abs(best.ts - targetTs);
+      for (let i = 1; i < series.points.length; i++) {
+        const d = Math.abs(series.points[i].ts - targetTs);
+        if (d < bestDist) {
+          best = series.points[i];
+          bestDist = d;
+        }
+      }
+      if (bestDist < bestSnapDist) {
+        bestSnapDist = bestDist;
+        snapTs = best.ts;
+      }
+      const color = chartMode === 'single' ? '#38bdf8' : LINE_COLORS[sIdx % LINE_COLORS.length];
+      const xPct = (chartData.xOf(best.ts) / chartData.W) * 100;
+      const yPct = best.avgMs !== null ? (chartData.yOf(best.avgMs) / chartData.H) * 100 : null;
+      items.push({
+        id: series.target.id,
+        name: series.target.name,
+        color,
+        point: best,
+        xPct,
+        yPct,
+      });
+    });
+
+    if (items.length === 0) return null;
+    const xPct = Math.min(100, Math.max(0, (chartData.xOf(snapTs) / chartData.W) * 100));
+    return { ts: snapTs, xPct, isPeak: isPeakHourCST(snapTs), items };
+  }, [chartData, chartHoverRatio, chartMode]);
+
+  const updateNetworkChartHover = (clientX: number) => {
+    const el = chartPlotRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const r = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    setChartHoverRatio(r);
+  };
 
   const tcpEntries = useMemo(() => {
     if (!profile) return [];
@@ -1049,96 +1108,218 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
                   ))}
                 </div>
 
-                {/* Plot-only SVG with non-scaling strokes */}
-                <svg
-                  viewBox={`0 0 ${chartData.W} ${chartData.H}`}
-                  className="flex-1 h-48 block overflow-visible"
-                  preserveAspectRatio="none"
+                {/* Plot-only SVG with non-scaling strokes + interactive crosshair overlay */}
+                <div
+                  ref={chartPlotRef}
+                  onMouseMove={(e) => updateNetworkChartHover(e.clientX)}
+                  onMouseLeave={() => setChartHoverRatio(null)}
+                  onTouchStart={(e) => {
+                    if (e.touches[0]) updateNetworkChartHover(e.touches[0].clientX);
+                  }}
+                  onTouchMove={(e) => {
+                    if (e.touches[0]) updateNetworkChartHover(e.touches[0].clientX);
+                  }}
+                  onTouchEnd={() => setChartHoverRatio(null)}
+                  className="relative flex-1 h-48 select-none touch-pan-y cursor-crosshair"
                 >
-                  {/* Peak hour (20:00-24:00 CST) shaded bands */}
-                  {chartData.peakBands.map((b, i) => (
-                    <rect
-                      key={i}
-                      x={b.x1}
-                      y={chartData.padT}
-                      width={Math.max(2, b.x2 - b.x1)}
-                      height={chartData.innerH}
-                      fill="rgba(251, 191, 36, 0.08)"
-                    />
-                  ))}
-
-                  {/* Horizontal grid lines */}
-                  {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
-                    const y = chartData.padT + ratio * chartData.innerH;
-                    return (
-                      <line
-                        key={ratio}
-                        x1={0}
-                        x2={chartData.W}
-                        y1={y}
-                        y2={y}
-                        stroke="rgba(255,255,255,0.06)"
-                        strokeDasharray="3 3"
-                        vectorEffect="non-scaling-stroke"
+                  <svg
+                    viewBox={`0 0 ${chartData.W} ${chartData.H}`}
+                    className="w-full h-full block overflow-visible"
+                    preserveAspectRatio="none"
+                  >
+                    {/* Peak hour (20:00-24:00 CST) shaded bands */}
+                    {chartData.peakBands.map((b, i) => (
+                      <rect
+                        key={i}
+                        x={b.x1}
+                        y={chartData.padT}
+                        width={Math.max(2, b.x2 - b.x1)}
+                        height={chartData.innerH}
+                        fill="rgba(251, 191, 36, 0.08)"
                       />
-                    );
-                  })}
+                    ))}
 
-                  {/* Series rendering */}
-                  {chartData.allSeries.map((series, sIdx) => {
-                    const color = chartMode === 'single' ? '#38bdf8' : LINE_COLORS[sIdx % LINE_COLORS.length];
-                    const valid = series.points.filter((p) => p.avgMs !== null);
-                    if (valid.length === 0) return null;
-
-                    const avgPath = valid
-                      .map((p, i) => `${i === 0 ? 'M' : 'L'} ${chartData.xOf(p.ts).toFixed(1)} ${chartData.yOf(p.avgMs!).toFixed(1)}`)
-                      .join(' ');
-
-                    // Min-Max smoke polygon in single mode
-                    let smokePoly = '';
-                    if (chartMode === 'single' && valid.length >= 2) {
-                      const topPts = valid.map(
-                        (p) => `${chartData.xOf(p.ts).toFixed(1)},${chartData.yOf(p.maxMs ?? p.avgMs!).toFixed(1)}`
-                      );
-                      const botPts = [...valid]
-                        .reverse()
-                        .map((p) => `${chartData.xOf(p.ts).toFixed(1)},${chartData.yOf(p.minMs ?? p.avgMs!).toFixed(1)}`);
-                      smokePoly = [...topPts, ...botPts].join(' ');
-                    }
-
-                    return (
-                      <g key={series.target.id}>
-                        {smokePoly && <polygon points={smokePoly} fill="rgba(56, 189, 248, 0.16)" />}
-                        <path
-                          d={avgPath}
-                          fill="none"
-                          stroke={color}
-                          strokeWidth={chartMode === 'single' ? 2 : 1.7}
+                    {/* Horizontal grid lines */}
+                    {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+                      const y = chartData.padT + ratio * chartData.innerH;
+                      return (
+                        <line
+                          key={ratio}
+                          x1={0}
+                          x2={chartData.W}
+                          y1={y}
+                          y2={y}
+                          stroke="rgba(255,255,255,0.06)"
+                          strokeDasharray="3 3"
                           vectorEffect="non-scaling-stroke"
                         />
+                      );
+                    })}
 
-                        {/* Loss vertical markers in single mode */}
-                        {chartMode === 'single' &&
-                          series.points
-                            .filter((p) => p.lossPct > 0)
-                            .map((p, i) => {
-                              const x = chartData.xOf(p.ts);
-                              const barH = Math.max(6, (p.lossPct / 100) * chartData.innerH);
-                              return (
-                                <rect
-                                  key={i}
-                                  x={x - 1.5}
-                                  y={chartData.padT + chartData.innerH - barH}
-                                  width={3}
-                                  height={barH}
-                                  fill="rgba(251, 113, 133, 0.85)"
-                                />
-                              );
+                    {/* Series rendering */}
+                    {chartData.allSeries.map((series, sIdx) => {
+                      const color = chartMode === 'single' ? '#38bdf8' : LINE_COLORS[sIdx % LINE_COLORS.length];
+                      const valid = series.points.filter((p) => p.avgMs !== null);
+                      if (valid.length === 0) return null;
+
+                      const avgPath = valid
+                        .map((p, i) => `${i === 0 ? 'M' : 'L'} ${chartData.xOf(p.ts).toFixed(1)} ${chartData.yOf(p.avgMs!).toFixed(1)}`)
+                        .join(' ');
+
+                      // Min-Max smoke polygon in single mode
+                      let smokePoly = '';
+                      if (chartMode === 'single' && valid.length >= 2) {
+                        const topPts = valid.map(
+                          (p) => `${chartData.xOf(p.ts).toFixed(1)},${chartData.yOf(p.maxMs ?? p.avgMs!).toFixed(1)}`
+                        );
+                        const botPts = [...valid]
+                          .reverse()
+                          .map((p) => `${chartData.xOf(p.ts).toFixed(1)},${chartData.yOf(p.minMs ?? p.avgMs!).toFixed(1)}`);
+                        smokePoly = [...topPts, ...botPts].join(' ');
+                      }
+
+                      return (
+                        <g key={series.target.id}>
+                          {smokePoly && <polygon points={smokePoly} fill="rgba(56, 189, 248, 0.16)" />}
+                          <path
+                            d={avgPath}
+                            fill="none"
+                            stroke={color}
+                            strokeWidth={chartMode === 'single' ? 2 : 1.7}
+                            vectorEffect="non-scaling-stroke"
+                          />
+
+                          {/* Loss vertical markers in single mode */}
+                          {chartMode === 'single' &&
+                            series.points
+                              .filter((p) => p.lossPct > 0)
+                              .map((p, i) => {
+                                const x = chartData.xOf(p.ts);
+                                const barH = Math.max(6, (p.lossPct / 100) * chartData.innerH);
+                                return (
+                                  <rect
+                                    key={i}
+                                    x={x - 1.5}
+                                    y={chartData.padT + chartData.innerH - barH}
+                                    width={3}
+                                    height={barH}
+                                    fill="rgba(251, 113, 133, 0.85)"
+                                  />
+                                );
+                              })}
+                        </g>
+                      );
+                    })}
+                  </svg>
+
+                  {/* Interactive Crosshair, Active Point Markers & Glass Tooltip */}
+                  {chartHover && (
+                    <>
+                      <div
+                        className="pointer-events-none absolute top-0 bottom-0 w-px bg-white/30"
+                        style={{ left: `${chartHover.xPct}%` }}
+                      />
+                      {chartHover.items.map((it) =>
+                        it.yPct !== null ? (
+                          <span
+                            key={it.id}
+                            className="pointer-events-none absolute w-2.5 h-2.5 rounded-full -translate-x-1/2 -translate-y-1/2 ring-2 ring-[#090b10] shadow"
+                            style={{
+                              left: `${it.xPct}%`,
+                              top: `${it.yPct}%`,
+                              backgroundColor: it.color,
+                            }}
+                          />
+                        ) : null
+                      )}
+                      <div
+                        className="pointer-events-none absolute top-2 z-20 bg-[#0d121c]/95 backdrop-blur-md border border-white/15 rounded-lg px-3 py-2 shadow-2xl text-[11px] font-mono min-w-[165px]"
+                        style={
+                          chartHover.xPct > 58
+                            ? { right: `${Math.max(0, 100 - chartHover.xPct)}%`, marginRight: 10 }
+                            : { left: `${chartHover.xPct}%`, marginLeft: 10 }
+                        }
+                      >
+                        <div className="flex items-center justify-between gap-2 pb-1 mb-1 border-b border-white/[0.08] text-[10px]">
+                          <span className="text-slate-300">
+                            {new Date(chartHover.ts).toLocaleString('zh-CN', {
+                              month: '2-digit',
+                              day: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit',
                             })}
-                      </g>
-                    );
-                  })}
-                </svg>
+                          </span>
+                          {chartHover.isPeak && (
+                            <span className="px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-300 border border-amber-400/25 text-[9px]">
+                              晚高峰
+                            </span>
+                          )}
+                        </div>
+                        {chartMode === 'single' && chartHover.items[0] ? (
+                          (() => {
+                            const pt = chartHover.items[0].point;
+                            return (
+                              <div className="space-y-0.5 text-[10px]">
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="text-slate-400">均值延迟</span>
+                                  <span className="text-sky-300 font-semibold">
+                                    {pt.avgMs !== null ? `${pt.avgMs.toFixed(1)} ms` : '超时丢包'}
+                                  </span>
+                                </div>
+                                {pt.minMs !== null && pt.maxMs !== null && (
+                                  <div className="flex items-center justify-between gap-3">
+                                    <span className="text-slate-400">最小 ~ 最大</span>
+                                    <span className="text-slate-200">
+                                      {pt.minMs.toFixed(1)} ~ {pt.maxMs.toFixed(1)} ms
+                                    </span>
+                                  </div>
+                                )}
+                                {pt.jitterMs !== null && (
+                                  <div className="flex items-center justify-between gap-3">
+                                    <span className="text-slate-400">抖动</span>
+                                    <span className="text-slate-200">{pt.jitterMs.toFixed(1)} ms</span>
+                                  </div>
+                                )}
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="text-slate-400">丢包率</span>
+                                  <span className={pt.lossPct > 0 ? 'text-rose-400 font-semibold' : 'text-emerald-400'}>
+                                    {pt.lossPct.toFixed(1)}%
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })()
+                        ) : (
+                          <div className="space-y-1 text-[10px]">
+                            {chartHover.items.map((it) => (
+                              <div key={it.id} className="flex items-center justify-between gap-3">
+                                <span className="inline-flex items-center gap-1.5 text-slate-300 truncate max-w-[110px]">
+                                  <span
+                                    className="w-2 h-2 rounded-full shrink-0"
+                                    style={{ backgroundColor: it.color }}
+                                  />
+                                  <span className="truncate">{it.name}</span>
+                                </span>
+                                <span className="shrink-0">
+                                  {it.point.avgMs !== null ? (
+                                    <span className="text-white font-semibold">
+                                      {it.point.avgMs.toFixed(1)}ms
+                                    </span>
+                                  ) : (
+                                    <span className="text-rose-400">超时</span>
+                                  )}
+                                  {it.point.lossPct > 0 && (
+                                    <span className="text-rose-400 ml-1">({it.point.lossPct.toFixed(0)}%)</span>
+                                  )}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
 
               {/* Crisp HTML X-Axis Timestamps (never stretched) */}

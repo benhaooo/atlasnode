@@ -48,7 +48,7 @@ import type { ServerTab } from './ServerDetail';
 interface OverviewTabProps {
   snapshot: ServerSnapshot;
   metrics?: LiveMetrics;
-  history: { cpu: number[]; rx: number[]; tx: number[] };
+  history: { ts: number[]; cpu: number[]; rx: number[]; tx: number[] };
   onNavigateTab: (tab: ServerTab) => void;
   onJumpFolder: (dirPath: string) => void;
   onServerUpdated: (server: ServerConfig) => void;
@@ -71,6 +71,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   const [dbHistory, setDbHistory] = useState<MetricHistoryResult | null>(null);
   const [editingTrafficPlan, setEditingTrafficPlan] = useState(false);
   const [showDailyTraffic, setShowDailyTraffic] = useState(false);
+  const [hoveredDayIdx, setHoveredDayIdx] = useState<number | null>(null);
 
   useEffect(() => {
     if (chartRange === 'live') return;
@@ -86,9 +87,22 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
     };
   }, [snapshot.server.id, chartRange]);
 
+  const tsSeries = chartRange === 'live' ? history.ts : (dbHistory?.points.map((p) => p.ts) || []);
   const cpuSeries = chartRange === 'live' ? history.cpu : (dbHistory?.points.map((p) => p.cpuPercent) || []);
   const rxSeries = chartRange === 'live' ? history.rx : (dbHistory?.points.map((p) => p.netRxBps) || []);
   const txSeries = chartRange === 'live' ? history.tx : (dbHistory?.points.map((p) => p.netTxBps) || []);
+
+  const formatSparkTime = (tsMs: number) => {
+    const d = new Date(tsMs);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    if (chartRange === 'live') {
+      return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+    if (chartRange === '7d') {
+      return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
 
   const m = metrics || snapshot.metrics;
   const nq = snapshot.latestNodeQuality;
@@ -203,7 +217,16 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
               <Sparkline
                 height={76}
                 maxVal={100}
-                series={[{ data: cpuSeries, color: '#38bdf8' }]}
+                timestamps={tsSeries}
+                formatTime={formatSparkTime}
+                series={[
+                  {
+                    data: cpuSeries,
+                    color: '#38bdf8',
+                    label: 'CPU',
+                    formatValue: (v) => `${v.toFixed(1)}%`,
+                  },
+                ]}
               />
             </div>
 
@@ -230,9 +253,21 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
               </div>
               <Sparkline
                 height={76}
+                timestamps={tsSeries}
+                formatTime={formatSparkTime}
                 series={[
-                  { data: rxSeries, color: '#34d399' },
-                  { data: txSeries, color: '#38bdf8' },
+                  {
+                    data: rxSeries,
+                    color: '#34d399',
+                    label: '入站 ↓',
+                    formatValue: (v) => `${formatSpeed(v)} (${formatMbps(v)})`,
+                  },
+                  {
+                    data: txSeries,
+                    color: '#38bdf8',
+                    label: '出站 ↑',
+                    formatValue: (v) => `${formatSpeed(v)} (${formatMbps(v)})`,
+                  },
                 ]}
               />
               {(bwCapMbps > 0 || (ts && (ts.peakRxBps > 0 || ts.peakTxBps > 0))) && (
@@ -419,59 +454,115 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
               {/* Expandable Daily Traffic Bar Chart */}
               {showDailyTraffic && ts.dailySeries && ts.dailySeries.length > 0 && (() => {
-                const maxDayBytes = Math.max(
-                  1,
-                  ...ts.dailySeries.map((d) => d.rxBytes + d.txBytes)
-                );
+                const series = ts.dailySeries;
+                const maxDayBytes = Math.max(1, ...series.map((d) => d.rxBytes + d.txBytes));
+                const activeDay =
+                  hoveredDayIdx !== null && series[hoveredDayIdx] ? series[hoveredDayIdx] : null;
                 return (
-                  <div className="bg-[#090b10] border border-white/[0.06] rounded-xl p-3 space-y-2">
-                    <div className="flex items-center justify-between text-[10px] font-mono text-slate-500">
-                      <span>本周期每日流量（{ts.dailySeries.length} 天）</span>
-                      <div className="flex items-center gap-3">
-                        <span className="inline-flex items-center gap-1">
-                          <span className="w-2 h-2 rounded-xs bg-emerald-400/80" />
-                          入站 ↓
-                        </span>
-                        <span className="inline-flex items-center gap-1">
-                          <span className="w-2 h-2 rounded-xs bg-sky-400/80" />
-                          出站 ↑
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex items-end gap-1 h-20 pt-1">
-                      {ts.dailySeries.map((d) => {
-                        const total = d.rxBytes + d.txBytes;
-                        const totalPct = total > 0 ? Math.max(6, (total / maxDayBytes) * 100) : 2;
-                        const rxRatio = total > 0 ? (d.rxBytes / total) * 100 : 50;
-                        const txRatio = 100 - rxRatio;
-                        const tip = `${d.day}\n入站 ↓ ${formatBytes(d.rxBytes)}\n出站 ↑ ${formatBytes(d.txBytes)}\n峰值 ↓ ${formatMbps(d.peakRxBps)} / ↑ ${formatMbps(d.peakTxBps)}`;
-                        return (
-                          <div
-                            key={d.day}
-                            title={tip}
-                            className="flex-1 min-w-[4px] h-full flex flex-col justify-end group/bar"
-                          >
-                            <div
-                              className="w-full rounded-t-xs overflow-hidden flex flex-col justify-end bg-white/[0.04] group-hover/bar:brightness-125 transition-all"
-                              style={{ height: `${totalPct}%` }}
-                            >
-                              {total > 0 && (
-                                <>
-                                  <div className="w-full bg-sky-400/80" style={{ height: `${txRatio}%` }} />
-                                  <div className="w-full bg-emerald-400/80" style={{ height: `${rxRatio}%` }} />
-                                </>
-                              )}
-                            </div>
+                  <div
+                    className="bg-[#090b10] border border-white/[0.06] rounded-xl p-3 space-y-2 relative"
+                    onMouseLeave={() => setHoveredDayIdx(null)}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] font-mono text-slate-500 min-h-[16px]">
+                      {activeDay ? (
+                        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-slate-300">
+                          <span className="text-white font-semibold">{activeDay.day}</span>
+                          <span>合计 {formatBytes(activeDay.rxBytes + activeDay.txBytes)}</span>
+                          <span className="text-emerald-400">↓ {formatBytes(activeDay.rxBytes)}</span>
+                          <span className="text-sky-400">↑ {formatBytes(activeDay.txBytes)}</span>
+                          <span className="text-slate-400">
+                            峰值 ↓{formatMbps(activeDay.peakRxBps)} / ↑{formatMbps(activeDay.peakTxBps)}
+                          </span>
+                        </div>
+                      ) : (
+                        <>
+                          <span>本周期每日流量（{series.length} 天，悬停查看明细）</span>
+                          <div className="flex items-center gap-3">
+                            <span className="inline-flex items-center gap-1">
+                              <span className="w-2 h-2 rounded-xs bg-emerald-400/80" />
+                              入站 ↓
+                            </span>
+                            <span className="inline-flex items-center gap-1">
+                              <span className="w-2 h-2 rounded-xs bg-sky-400/80" />
+                              出站 ↑
+                            </span>
                           </div>
-                        );
-                      })}
+                        </>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <div className="flex items-end gap-1 h-24 pt-2">
+                        {series.map((d, idx) => {
+                          const total = d.rxBytes + d.txBytes;
+                          const totalPct = total > 0 ? Math.max(6, (total / maxDayBytes) * 100) : 2;
+                          const rxRatio = total > 0 ? (d.rxBytes / total) * 100 : 50;
+                          const txRatio = 100 - rxRatio;
+                          const isHovered = hoveredDayIdx === idx;
+                          const dimmed = hoveredDayIdx !== null && !isHovered;
+                          return (
+                            <div
+                              key={d.day}
+                              onMouseEnter={() => setHoveredDayIdx(idx)}
+                              onClick={() => setHoveredDayIdx(isHovered ? null : idx)}
+                              className={`flex-1 min-w-[4px] h-full flex flex-col justify-end rounded-t-xs cursor-pointer transition-all px-[1px] ${
+                                isHovered ? 'bg-white/[0.07]' : ''
+                              }`}
+                            >
+                              <div
+                                className={`w-full rounded-t-xs overflow-hidden flex flex-col justify-end bg-white/[0.05] transition-all ${
+                                  isHovered
+                                    ? 'brightness-125 ring-1 ring-white/30'
+                                    : dimmed
+                                      ? 'opacity-45'
+                                      : ''
+                                }`}
+                                style={{ height: `${totalPct}%` }}
+                              >
+                                {total > 0 && (
+                                  <>
+                                    <div className="w-full bg-sky-400/85" style={{ height: `${txRatio}%` }} />
+                                    <div className="w-full bg-emerald-400/85" style={{ height: `${rxRatio}%` }} />
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {activeDay && hoveredDayIdx !== null && (
+                        <div
+                          className="pointer-events-none hidden sm:block absolute bottom-full mb-1.5 z-20 bg-[#0d121c]/95 backdrop-blur-md border border-white/15 rounded-lg px-2.5 py-1.5 shadow-xl text-[10px] font-mono whitespace-nowrap"
+                          style={
+                            hoveredDayIdx / Math.max(1, series.length - 1) > 0.6
+                              ? { right: 0 }
+                              : hoveredDayIdx / Math.max(1, series.length - 1) < 0.25
+                                ? { left: 0 }
+                                : {
+                                    left: `${((hoveredDayIdx + 0.5) / series.length) * 100}%`,
+                                    transform: 'translateX(-50%)',
+                                  }
+                          }
+                        >
+                          <div className="text-white font-semibold mb-0.5">
+                            {activeDay.day} · 合计 {formatBytes(activeDay.rxBytes + activeDay.txBytes)}
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="text-emerald-400">入站 ↓ {formatBytes(activeDay.rxBytes)}</span>
+                            <span className="text-sky-400">出站 ↑ {formatBytes(activeDay.txBytes)}</span>
+                          </div>
+                          <div className="text-slate-400 mt-0.5">
+                            峰值 ↓ {formatMbps(activeDay.peakRxBps)} · ↑ {formatMbps(activeDay.peakTxBps)}
+                          </div>
+                        </div>
+                      )}
                     </div>
                     <div className="flex justify-between text-[9px] font-mono text-slate-600">
-                      <span>{ts.dailySeries[0].day.slice(5)}</span>
-                      {ts.dailySeries.length > 2 && (
-                        <span>{ts.dailySeries[Math.floor(ts.dailySeries.length / 2)].day.slice(5)}</span>
+                      <span>{series[0].day.slice(5)}</span>
+                      {series.length > 2 && (
+                        <span>{series[Math.floor(series.length / 2)].day.slice(5)}</span>
                       )}
-                      <span>{ts.dailySeries[ts.dailySeries.length - 1].day.slice(5)}</span>
+                      <span>{series[series.length - 1].day.slice(5)}</span>
                     </div>
                   </div>
                 );

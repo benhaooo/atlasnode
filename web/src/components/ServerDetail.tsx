@@ -101,7 +101,8 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
   const [fileInitialPath, setFileInitialPath] = useState<string>('/');
   const [terminalContainer, setTerminalContainer] = useState<string | null>(null);
   const [liveMetrics, setLiveMetrics] = useState<LiveMetrics | undefined>(snapshot.metrics);
-  const [history, setHistory] = useState<{ cpu: number[]; rx: number[]; tx: number[] }>({
+  const [history, setHistory] = useState<{ ts: number[]; cpu: number[]; rx: number[]; tx: number[] }>({
+    ts: snapshot.metrics ? [snapshot.metrics.timestamp || Date.now()] : [],
     cpu: snapshot.metrics ? [snapshot.metrics.cpuPercent] : [],
     rx: snapshot.metrics ? [snapshot.metrics.netRxBps] : [],
     tx: snapshot.metrics ? [snapshot.metrics.netTxBps] : [],
@@ -147,6 +148,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
   useEffect(() => {
     setLiveMetrics(snapshot.metrics);
     setHistory({
+      ts: snapshot.metrics ? [snapshot.metrics.timestamp || Date.now()] : [],
       cpu: snapshot.metrics ? [snapshot.metrics.cpuPercent] : [],
       rx: snapshot.metrics ? [snapshot.metrics.netRxBps] : [],
       tx: snapshot.metrics ? [snapshot.metrics.netTxBps] : [],
@@ -170,6 +172,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
         setLiveMetrics(m);
         onLiveMetrics?.(snapshot.server.id, m);
         setHistory((prev) => ({
+          ts: [...prev.ts.slice(-44), m.timestamp || Date.now()],
           cpu: [...prev.cpu.slice(-44), m.cpuPercent],
           rx: [...prev.rx.slice(-44), m.netRxBps],
           tx: [...prev.tx.slice(-44), m.netTxBps],

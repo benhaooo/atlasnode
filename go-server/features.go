@@ -544,12 +544,48 @@ exit 1
 	return out, nil
 }
 
-func spawnComposeAction(srv ServerConfig, composeDir, project, action string) (*StreamProcess, error) {
+func isSafeComposeDirToDelete(dir string) bool {
+	cleaned := strings.TrimRight(strings.TrimSpace(dir), "/")
+	if cleaned == "" || !strings.HasPrefix(cleaned, "/") || strings.Contains(cleaned, "..") {
+		return false
+	}
+	forbidden := map[string]bool{
+		"/": true, "/root": true, "/home": true, "/opt": true, "/srv": true,
+		"/var": true, "/etc": true, "/usr": true, "/usr/local": true,
+		"/usr/local/services": true, "/tmp": true, "/bin": true, "/sbin": true,
+		"/lib": true, "/lib64": true, "/boot": true, "/dev": true, "/proc": true,
+		"/sys": true, "/run": true, "/mnt": true, "/media": true, "/data": true,
+	}
+	if forbidden[cleaned] {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(cleaned, "/"), "/")
+	if len(parts) < 2 {
+		return false
+	}
+	// Extra guard: never delete /home/<user> directly
+	if parts[0] == "home" && len(parts) < 3 {
+		return false
+	}
+	return true
+}
+
+func spawnComposeAction(srv ServerConfig, composeDir, project, action string, removeVolumes, removeDir bool) (*StreamProcess, error) {
+	rmVolFlag := "0"
+	if removeVolumes {
+		rmVolFlag = "1"
+	}
+	rmDirFlag := "0"
+	if removeDir && isSafeComposeDirToDelete(composeDir) {
+		rmDirFlag = "1"
+	}
 	script := `set -e
 DIR="$1"
 PROJ="$2"
 ACTION="$3"
-cd "$DIR"
+RM_VOL="$4"
+RM_DIR="$5"
+[ -d "$DIR" ] && cd "$DIR"
 
 # Find containers belonging to this compose stack
 if [ -n "$PROJ" ]; then
@@ -561,7 +597,6 @@ else
 fi
 
 # For stop: stopping the running containers of this stack directly is always exact
-# (avoids legacy docker-compose v1 / missing .env / custom -p mismatches)
 if [ "$ACTION" = "stop" ]; then
   if [ -z "$RUNNING_CIDS" ]; then
     echo "[AtlasNode] 该栈当前没有运行中的容器"
@@ -607,8 +642,8 @@ else
   done
 fi
 
+EXTRA_ARGS=""
 if [ -n "$COMPOSE_CMD" ]; then
-  EXTRA_ARGS=""
   if [ -n "$PROJ" ]; then
     EXTRA_ARGS="$EXTRA_ARGS -p $PROJ"
   fi
@@ -645,6 +680,35 @@ if [ -z "$COMPOSE_CMD" ] && command -v docker-compose >/dev/null 2>&1; then
   fi
 fi
 
+# Remove entire compose stack (down + force-clean leftover containers + optional dir removal)
+if [ "$ACTION" = "remove" ]; then
+  VOL_OPT=""
+  [ "$RM_VOL" = "1" ] && VOL_OPT="-v"
+  if [ -n "$COMPOSE_CMD" ]; then
+    echo "[AtlasNode] $PWD -> $COMPOSE_CMD$EXTRA_ARGS down --remove-orphans $VOL_OPT"
+    # shellcheck disable=SC2086
+    $COMPOSE_CMD $EXTRA_ARGS down --remove-orphans $VOL_OPT 2>&1 || true
+  fi
+  # Ensure no leftover containers from this stack remain
+  if [ -n "$PROJ" ]; then
+    LEFT=$(docker ps -aq --filter "label=com.docker.compose.project=$PROJ" 2>/dev/null || true)
+  else
+    LEFT=$(docker ps -aq --filter "label=com.docker.compose.project.working_dir=$DIR" 2>/dev/null || true)
+  fi
+  if [ -n "$LEFT" ]; then
+    echo "[AtlasNode] 清理剩余栈容器..."
+    # shellcheck disable=SC2086
+    echo "$LEFT" | xargs -r docker rm -f $VOL_OPT 2>&1
+  fi
+  if [ "$RM_DIR" = "1" ] && [ -d "$DIR" ]; then
+    echo "[AtlasNode] 删除项目目录: $DIR"
+    cd /
+    rm -rf -- "$DIR"
+  fi
+  echo "[AtlasNode] 服务 ${PROJ:-$DIR} 已删除"
+  exit 0
+fi
+
 if [ -n "$COMPOSE_CMD" ]; then
   case "$ACTION" in
     pull_up)
@@ -666,7 +730,7 @@ if [ -n "$COMPOSE_CMD" ]; then
   exit 0
 fi
 
-# Fallback when no Compose v2+ binary exists on host
+# Fallback when no compatible Compose binary exists on host
 case "$ACTION" in
   restart|up)
     if [ -z "$ALL_CIDS" ]; then
@@ -684,7 +748,7 @@ case "$ACTION" in
     ;;
 esac
 `
-	return spawnScriptStream(srv, script, ExecOpts{Args: []string{composeDir, project, action}, Sudo: true})
+	return spawnScriptStream(srv, script, ExecOpts{Args: []string{composeDir, project, action, rmVolFlag, rmDirFlag}, Sudo: true})
 }
 
 type KeySyncResult struct {

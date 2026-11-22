@@ -88,6 +88,11 @@ export const api = {
     ),
   dockerAction: (id: string, cid: string, action: 'start' | 'stop' | 'restart') =>
     request<{ ok: boolean }>(`/api/servers/${id}/docker/${encodeURIComponent(cid)}/${action}`, { method: 'POST' }),
+  dockerRemove: (id: string, cid: string, removeVolumes = false) =>
+    request<{ ok: boolean }>(`/api/servers/${id}/docker/${encodeURIComponent(cid)}/remove`, {
+      method: 'POST',
+      body: JSON.stringify({ removeVolumes }),
+    }),
   dockerLogs: (id: string, cid: string, tail = 180) =>
     request<{ logs: string }>(`/api/servers/${id}/docker/${encodeURIComponent(cid)}/logs?tail=${tail}`),
   systemdLogs: (id: string, unit: string, lines = 120) =>

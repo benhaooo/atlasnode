@@ -1101,6 +1101,32 @@ func runDockerAction(srv ServerConfig, containerID, action string) (string, erro
 	return strings.TrimSpace(res.Stdout), nil
 }
 
+func runDockerRemove(srv ServerConfig, containerID string, removeVolumes bool) (string, error) {
+	if !reContainerName.MatchString(containerID) {
+		return "", errors.New("非法的容器标识")
+	}
+	script := `docker rm -f "$1"`
+	if removeVolumes {
+		script = `docker rm -f -v "$1"`
+	}
+	res, err := execScript(srv, script, ExecOpts{
+		Args:    []string{containerID},
+		Timeout: 30 * time.Second,
+		Sudo:    true,
+	})
+	if err != nil {
+		return "", err
+	}
+	if res.Code != 0 {
+		msg := strings.TrimSpace(res.Stderr)
+		if msg == "" {
+			msg = "docker rm failed"
+		}
+		return "", errors.New(msg)
+	}
+	return strings.TrimSpace(res.Stdout), nil
+}
+
 func getDockerLogs(srv ServerConfig, containerID string, tail int) (string, error) {
 	if !reContainerName.MatchString(containerID) {
 		return "", errors.New("非法的容器标识")

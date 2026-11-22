@@ -1,14 +1,19 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowDownToLine,
   Box,
+  ChevronDown,
+  ChevronRight,
   Cpu,
   ExternalLink,
   FileCode2,
   FileText,
   FolderOpen,
   Globe,
+  Layers,
   Loader2,
+  MemoryStick,
   Play,
   RefreshCw,
   RotateCw,
@@ -18,10 +23,12 @@ import {
   ShieldCheck,
   Square,
   Terminal,
+  Trash2,
   X,
 } from 'lucide-react';
 import { api } from '../api';
-import type { DockerContainer, ProxyRoute, ServerConfig, ServerSnapshot, SystemdService } from '../types';
+import type { DockerContainer, DockerPort, ProxyRoute, ServerConfig, ServerSnapshot, SystemdService } from '../types';
+import { formatBytes } from '../utils';
 
 interface ServicesTabProps {
   snapshot: ServerSnapshot;
@@ -29,6 +36,63 @@ interface ServicesTabProps {
   onServerUpdated: (server: ServerConfig) => void;
   onRefreshSnapshot: () => void;
   onOpenContainerTerminal?: (containerName: string) => void;
+}
+
+interface ComposeStackGroup {
+  project: string;
+  dir?: string;
+  items: DockerContainer[];
+  runningCount: number;
+  unhealthyCount: number;
+  totalCpu: number;
+  totalMemBytes: number;
+  publicPorts: { port: DockerPort; container: string }[];
+  internalPorts: { port: DockerPort; container: string }[];
+  hasOnlyCleanExited: boolean;
+}
+
+type DeleteTarget =
+  | { kind: 'stack'; project: string; dir?: string; containers: DockerContainer[] }
+  | { kind: 'container'; container: DockerContainer };
+
+const PROTECTED_SYSTEMD = new Set(['ssh', 'sshd', 'atlasnode', 'tailscaled']);
+
+function parseMemToBytes(memUsage?: string): number {
+  if (!memUsage) return 0;
+  const used = memUsage.split('/')[0]?.trim() || '';
+  const m = used.match(/^([\d.]+)\s*([a-zA-Z]+)$/);
+  if (!m) return 0;
+  const val = parseFloat(m[1]);
+  if (!Number.isFinite(val)) return 0;
+  const unit = m[2].toLowerCase();
+  if (unit.startsWith('g')) return val * 1024 * 1024 * 1024;
+  if (unit.startsWith('m')) return val * 1024 * 1024;
+  if (unit.startsWith('k')) return val * 1024;
+  return val;
+}
+
+function isSafeDirHint(dir?: string): boolean {
+  if (!dir) return false;
+  const cleaned = dir.trim().replace(/\/+$/, '');
+  if (!cleaned.startsWith('/') || cleaned.includes('..')) return false;
+  const forbidden = new Set([
+    '/', '/root', '/home', '/opt', '/srv', '/var', '/etc', '/usr',
+    '/usr/local', '/usr/local/services', '/tmp', '/data',
+  ]);
+  if (forbidden.has(cleaned)) return false;
+  const parts = cleaned.replace(/^\/+/, '').split('/');
+  if (parts.length < 2) return false;
+  if (parts[0] === 'home' && parts.length < 3) return false;
+  return true;
+}
+
+function shortServiceLabel(c: DockerContainer, project: string): string {
+  const prefix = `${project}-`;
+  let name = c.name;
+  if (name.toLowerCase().startsWith(prefix.toLowerCase())) {
+    name = name.slice(prefix.length);
+  }
+  return name.replace(/-\d+$/, '');
 }
 
 export const ServicesTab: React.FC<ServicesTabProps> = ({
@@ -43,8 +107,15 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
   const [systemdServices, setSystemdServices] = useState<SystemdService[]>(snapshot.systemdHighlights);
   const [proxyRoutes, setProxyRoutes] = useState<ProxyRoute[]>([]);
   const [loadingProxies, setLoadingProxies] = useState(false);
+
   const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'running' | 'stopped'>('all');
+  const [expandedStacks, setExpandedStacks] = useState<Record<string, boolean>>({});
+  const [systemdExpanded, setSystemdExpanded] = useState(!snapshot.dockerAvailable);
+
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState('');
+
   const [logsModal, setLogsModal] = useState<{ title: string; content: string; loading: boolean } | null>(null);
   const [composeModal, setComposeModal] = useState<{
     project: string;
@@ -60,8 +131,12 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
     output: string;
     running: boolean;
   } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  const [deleteVolumes, setDeleteVolumes] = useState(false);
+  const [deleteDir, setDeleteDir] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
   const streamPreRef = useRef<HTMLPreElement | null>(null);
-  const [error, setError] = useState('');
 
   const load = async () => {
     setLoading(true);
@@ -71,6 +146,9 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
       setDockerAvailable(res.dockerAvailable);
       setContainers(res.containers);
       setSystemdServices(res.systemdServices);
+      if (!res.dockerAvailable) {
+        setSystemdExpanded(true);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载服务列表失败');
     } finally {
@@ -92,9 +170,15 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
 
   useEffect(() => {
     setProxyRoutes([]);
+    setExpandedStacks({});
+    setSystemdExpanded(!snapshot.dockerAvailable);
     load();
     loadProxies();
   }, [snapshot.server.id]);
+
+  const toggleStack = (project: string) => {
+    setExpandedStacks((prev) => ({ ...prev, [project]: !prev[project] }));
+  };
 
   const handleOpenComposeEditor = async (project: string, dir: string) => {
     setComposeModal({ project, dir, path: '', content: '', loading: true, saving: false });
@@ -126,32 +210,43 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
     setComposeModal((prev) => (prev ? { ...prev, saving: true, msg: undefined } : prev));
     try {
       await api.writeFile(snapshot.server.id, composeModal.path, composeModal.content);
-      setComposeModal((prev) => (prev ? { ...prev, saving: false, msg: '已保存 compose 文件，可点击“更新重建”应用变更' } : prev));
+      setComposeModal((prev) =>
+        prev ? { ...prev, saving: false, msg: '已保存配置，点击「应用 (up -d)」生效' } : prev
+      );
     } catch (err) {
       setComposeModal((prev) =>
-        prev
-          ? { ...prev, saving: false, msg: err instanceof Error ? err.message : '保存失败' }
-          : prev
+        prev ? { ...prev, saving: false, msg: err instanceof Error ? err.message : '保存失败' } : prev
       );
     }
   };
 
   const handleComposeAction = async (
     project: string,
-    dir: string,
-    action: 'pull_up' | 'up' | 'restart' | 'stop'
+    dir: string | undefined,
+    action: 'pull_up' | 'up' | 'restart' | 'stop' | 'remove',
+    opts?: { removeVolumes?: boolean; removeDir?: boolean; skipConfirm?: boolean }
   ) => {
     const label =
       action === 'pull_up'
-        ? '拉取最新镜像并重建 (pull && up -d)'
+        ? '拉取最新镜像并重建'
         : action === 'up'
-          ? '启动 / 应用配置 (up -d)'
+          ? '启动服务'
           : action === 'stop'
-            ? '停止整个栈 (stop)'
-            : '重启栈 (restart)';
-    if (action === 'pull_up' && !confirm(`确认对 ${project} 执行 docker compose pull && up -d？`)) return;
-    if (action === 'stop' && !confirm(`确认停止 Compose 栈 ${project} 中的全部容器？`)) return;
-    setStreamModal({ title: `${project} · ${label}`, output: `$ cd ${dir}\n`, running: true });
+            ? '停止服务'
+            : action === 'remove'
+              ? '删除服务'
+              : '重启服务';
+    if (!opts?.skipConfirm) {
+      if (action === 'pull_up' && !confirm(`确认更新并重建服务「${project}」？`)) return;
+      if (action === 'stop' && !confirm(`确认停止服务「${project}」中的全部容器？`)) return;
+      if (action === 'restart' && !confirm(`确认重启服务「${project}」？`)) return;
+    }
+
+    setStreamModal({
+      title: `${project} · ${label}`,
+      output: dir ? `$ cd ${dir}\n` : '',
+      running: true,
+    });
     try {
       const res = await fetch(
         `/api/servers/${encodeURIComponent(snapshot.server.id)}/compose/action`,
@@ -159,7 +254,13 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dir, project, action }),
+          body: JSON.stringify({
+            dir: dir || '',
+            project,
+            action,
+            removeVolumes: Boolean(opts?.removeVolumes),
+            removeDir: Boolean(opts?.removeDir),
+          }),
         }
       );
       if (!res.ok || !res.body) {
@@ -209,14 +310,49 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
     }
   };
 
+  const openDeleteModal = (target: DeleteTarget) => {
+    setDeleteTarget(target);
+    setDeleteVolumes(false);
+    setDeleteDir(false);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    if (deleteTarget.kind === 'stack') {
+      const target = deleteTarget;
+      const rmVol = deleteVolumes;
+      const rmDir = deleteDir;
+      setDeleteTarget(null);
+      await handleComposeAction(target.project, target.dir, 'remove', {
+        removeVolumes: rmVol,
+        removeDir: rmDir,
+        skipConfirm: true,
+      });
+      return;
+    }
+
+    setDeleting(true);
+    setError('');
+    try {
+      await api.dockerRemove(snapshot.server.id, deleteTarget.container.id, deleteVolumes);
+      setDeleteTarget(null);
+      await load();
+      onRefreshSnapshot();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除容器失败');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const handleOpenDockerLogs = async (c: DockerContainer) => {
-    setLogsModal({ title: `Docker 日志 · ${c.name}`, content: '', loading: true });
+    setLogsModal({ title: `容器日志 · ${c.name}`, content: '', loading: true });
     try {
       const res = await api.dockerLogs(snapshot.server.id, c.id, 220);
-      setLogsModal({ title: `Docker 日志 · ${c.name}`, content: res.logs || '(无日志输出)', loading: false });
+      setLogsModal({ title: `容器日志 · ${c.name}`, content: res.logs || '(无日志输出)', loading: false });
     } catch (err) {
       setLogsModal({
-        title: `Docker 日志 · ${c.name}`,
+        title: `容器日志 · ${c.name}`,
         content: err instanceof Error ? err.message : '获取日志失败',
         loading: false,
       });
@@ -237,8 +373,6 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
     }
   };
 
-  const PROTECTED_SYSTEMD = new Set(['ssh', 'sshd', 'atlasnode', 'tailscaled']);
-
   const handleSystemdAction = async (svc: SystemdService, action: 'start' | 'stop' | 'restart') => {
     if (action === 'stop' && PROTECTED_SYSTEMD.has(svc.name)) return;
     const actionLabel = action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启';
@@ -256,45 +390,120 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
     }
   };
 
-  const filteredSystemd = useMemo(() => {
+  // Partition Docker containers into Compose Project Stacks + Standalone Single-Container Services
+  const { stacks, standalones } = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return systemdServices.filter(
-      (s) =>
-        !q ||
-        s.name.toLowerCase().includes(q) ||
-        (s.description || '').toLowerCase().includes(q)
-    );
-  }, [systemdServices, query]);
+    const stackMap = new Map<string, DockerContainer[]>();
+    const standaloneList: DockerContainer[] = [];
 
-  // Group containers by Compose Project
-  const grouped = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const filtered = containers.filter(
-      (c) =>
-        !q ||
-        c.name.toLowerCase().includes(q) ||
-        c.image.toLowerCase().includes(q) ||
-        (c.composeProject || '').toLowerCase().includes(q)
-    );
-    const map = new Map<string, { project: string; dir?: string; items: DockerContainer[] }>();
-    for (const c of filtered) {
-      const key = c.composeProject || '独立容器 (Standalone)';
-      if (!map.has(key)) {
-        map.set(key, { project: key, dir: c.composeDir, items: [] });
+    for (const c of containers) {
+      if (c.composeProject) {
+        if (!stackMap.has(c.composeProject)) stackMap.set(c.composeProject, []);
+        stackMap.get(c.composeProject)!.push(c);
+      } else {
+        standaloneList.push(c);
       }
-      map.get(key)!.items.push(c);
     }
-    return Array.from(map.values()).sort((a, b) => {
-      if (a.project.startsWith('独立容器')) return 1;
-      if (b.project.startsWith('独立容器')) return -1;
+
+    const builtStacks: ComposeStackGroup[] = [];
+    for (const [project, items] of stackMap.entries()) {
+      const matchesQuery =
+        !q ||
+        project.toLowerCase().includes(q) ||
+        items.some(
+          (c) =>
+            c.name.toLowerCase().includes(q) ||
+            c.image.toLowerCase().includes(q) ||
+            (c.composeDir || '').toLowerCase().includes(q)
+        );
+      if (!matchesQuery) continue;
+
+      const runningCount = items.filter((c) => c.state === 'running').length;
+      if (statusFilter === 'running' && runningCount === 0) continue;
+      if (statusFilter === 'stopped' && runningCount > 0) continue;
+
+      const unhealthyCount = items.filter((c) => c.health === 'unhealthy').length;
+      const totalCpu = items.reduce((acc, c) => acc + (c.state === 'running' ? c.cpuPercent || 0 : 0), 0);
+      const totalMemBytes = items.reduce((acc, c) => acc + (c.state === 'running' ? parseMemToBytes(c.memUsage) : 0), 0);
+
+      const seenPort = new Set<string>();
+      const publicPorts: { port: DockerPort; container: string }[] = [];
+      const internalPorts: { port: DockerPort; container: string }[] = [];
+      for (const c of items) {
+        for (const p of c.ports) {
+          const pk = `${p.hostIp}:${p.hostPort}->${p.containerPort}/${p.proto}`;
+          if (seenPort.has(pk)) continue;
+          seenPort.add(pk);
+          if (p.quickUrl) {
+            publicPorts.push({ port: p, container: shortServiceLabel(c, project) });
+          } else {
+            internalPorts.push({ port: p, container: shortServiceLabel(c, project) });
+          }
+        }
+      }
+
+      const stoppedItems = items.filter((c) => c.state !== 'running');
+      const hasOnlyCleanExited =
+        stoppedItems.length > 0 && stoppedItems.every((c) => /Exited\s*\(0\)/i.test(c.status));
+
+      builtStacks.push({
+        project,
+        dir: items.find((i) => i.composeDir)?.composeDir,
+        items,
+        runningCount,
+        unhealthyCount,
+        totalCpu,
+        totalMemBytes,
+        publicPorts,
+        internalPorts,
+        hasOnlyCleanExited,
+      });
+    }
+
+    builtStacks.sort((a, b) => {
+      // Running stacks first, then by container count
+      const aRun = a.runningCount > 0 ? 1 : 0;
+      const bRun = b.runningCount > 0 ? 1 : 0;
+      if (aRun !== bRun) return bRun - aRun;
       return b.items.length - a.items.length;
     });
-  }, [containers, query]);
 
-  const allLinks = [...snapshot.server.quickLinks, ...snapshot.detectedLinks];
+    const filteredStandalones = standaloneList
+      .filter((c) => {
+        if (q && !c.name.toLowerCase().includes(q) && !c.image.toLowerCase().includes(q)) return false;
+        if (statusFilter === 'running' && c.state !== 'running') return false;
+        if (statusFilter === 'stopped' && c.state === 'running') return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const aRun = a.state === 'running' ? 1 : 0;
+        const bRun = b.state === 'running' ? 1 : 0;
+        if (aRun !== bRun) return bRun - aRun;
+        return a.name.localeCompare(b.name);
+      });
+
+    return { stacks: builtStacks, standalones: filteredStandalones };
+  }, [containers, query, statusFilter]);
+
+  const filteredSystemd = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return systemdServices.filter((s) => {
+      if (q && !s.name.toLowerCase().includes(q) && !(s.description || '').toLowerCase().includes(q)) {
+        return false;
+      }
+      if (statusFilter === 'running' && s.activeState !== 'active') return false;
+      if (statusFilter === 'stopped' && s.activeState === 'active') return false;
+      return true;
+    });
+  }, [systemdServices, query, statusFilter]);
+
+  const showSystemdList = systemdExpanded || query.trim().length > 0;
+  const totalRunningServices =
+    stacks.filter((s) => s.runningCount > 0).length + standalones.filter((c) => c.state === 'running').length;
+  const totalServices = stacks.length + standalones.length;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Reverse Proxy Domains & TLS Certificate Topology (shown only when routes exist) */}
       {proxyRoutes.length > 0 && (
         <section className="space-y-2.5">
@@ -314,112 +523,102 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {proxyRoutes.map((route, idx) => {
-                const days = route.tlsDaysLeft;
-                const certColor =
-                  days === null || days === undefined
-                    ? 'text-slate-500 bg-white/[0.04] border-white/[0.07]'
-                    : days <= 7
-                      ? 'text-rose-300 bg-rose-500/15 border-rose-500/30'
-                      : days <= 20
-                        ? 'text-amber-300 bg-amber-500/15 border-amber-500/30'
-                        : 'text-emerald-300 bg-emerald-500/10 border-emerald-500/25';
-                return (
-                  <div
-                    key={`${route.engine}-${route.domain}-${idx}`}
-                    className="bg-[#0f131b] border border-white/[0.07] hover:border-emerald-400/35 rounded-xl p-3.5 transition-all space-y-2"
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-400/25 text-sky-300">
-                            {route.engine}
-                          </span>
-                          {route.url ? (
-                            <a
-                              href={route.url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-xs font-semibold text-white hover:text-sky-300 truncate inline-flex items-center gap-1"
-                            >
-                              <span className="truncate">{route.domain}</span>
-                              <ExternalLink className="w-3 h-3 shrink-0 text-slate-400" />
-                            </a>
-                          ) : (
-                            <span className="text-xs font-semibold text-white truncate">{route.domain}</span>
-                          )}
-                        </div>
-                        <div className="text-[11px] font-mono text-slate-400 truncate mt-1">
-                          → {route.upstream}
-                        </div>
-                      </div>
-                      {days !== null && days !== undefined && (
-                        <span
-                          className={`text-[10px] font-mono px-2 py-0.5 rounded-md border shrink-0 inline-flex items-center gap-1 ${certColor}`}
-                          title={route.tlsIssuer || 'TLS 证书剩余有效期'}
-                        >
-                          <ShieldCheck className="w-3 h-3" />
-                          {days}天
+              const days = route.tlsDaysLeft;
+              const certColor =
+                days === null || days === undefined
+                  ? 'text-slate-500 bg-white/[0.04] border-white/[0.07]'
+                  : days <= 7
+                    ? 'text-rose-300 bg-rose-500/15 border-rose-500/30'
+                    : days <= 20
+                      ? 'text-amber-300 bg-amber-500/15 border-amber-500/30'
+                      : 'text-emerald-300 bg-emerald-500/10 border-emerald-500/25';
+              return (
+                <div
+                  key={`${route.engine}-${route.domain}-${idx}`}
+                  className="bg-[#0f131b] border border-white/[0.07] hover:border-emerald-400/35 rounded-xl p-3.5 transition-all space-y-2"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded bg-sky-500/15 border border-sky-400/25 text-sky-300">
+                          {route.engine}
                         </span>
-                      )}
+                        {route.url ? (
+                          <a
+                            href={route.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs font-semibold text-white hover:text-sky-300 truncate inline-flex items-center gap-1"
+                          >
+                            <span className="truncate">{route.domain}</span>
+                            <ExternalLink className="w-3 h-3 shrink-0 text-slate-400" />
+                          </a>
+                        ) : (
+                          <span className="text-xs font-semibold text-white truncate">{route.domain}</span>
+                        )}
+                      </div>
+                      <div className="text-[11px] font-mono text-slate-400 truncate mt-1">
+                        → {route.upstream}
+                      </div>
                     </div>
+                    {days !== null && days !== undefined && (
+                      <span
+                        className={`text-[10px] font-mono px-2 py-0.5 rounded-md border shrink-0 inline-flex items-center gap-1 ${certColor}`}
+                        title={route.tlsIssuer || 'TLS 证书剩余有效期'}
+                      >
+                        <ShieldCheck className="w-3 h-3" />
+                        {days}天
+                      </span>
+                    )}
                   </div>
-                );
-              })}
-            </div>
+                </div>
+              );
+            })}
+          </div>
         </section>
       )}
 
-      {/* Quick-Access Web Services Shelf */}
-      {allLinks.length > 0 && (
-        <section className="space-y-2.5">
-          <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">
-            快捷访问入口
+      {/* Search, Filter & Refresh Toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-2.5">
+        <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[220px]">
+          <div className="relative flex-1 min-w-[180px] max-w-sm">
+            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="搜索项目、容器、镜像或系统服务..."
+              className="w-full bg-[#0f131b] border border-white/[0.08] focus:border-sky-400/50 focus:outline-none rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder:text-slate-500"
+            />
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {allLinks.map((link) => (
-              <a
-                key={link.id}
-                href={link.url}
-                target="_blank"
-                rel="noreferrer"
-                className="group bg-[#0f131b] hover:bg-[#141a26] border border-white/[0.07] hover:border-sky-400/40 rounded-xl p-3.5 transition-all flex items-start justify-between gap-2"
+
+          <div className="inline-flex items-center bg-[#0f131b] border border-white/[0.08] rounded-xl p-0.5 text-[11px]">
+            {(
+              [
+                ['all', '全部'],
+                ['running', '运行中'],
+                ['stopped', '已停止'],
+              ] as const
+            ).map(([k, lbl]) => (
+              <button
+                key={k}
+                onClick={() => setStatusFilter(k)}
+                className={`px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer ${
+                  statusFilter === k ? 'bg-sky-500/20 text-sky-300 font-semibold' : 'text-slate-400 hover:text-white'
+                }`}
               >
-                <div className="min-w-0">
-                  <div className="text-xs font-semibold text-white group-hover:text-sky-300 truncate">
-                    {link.name}
-                  </div>
-                  <div className="text-[11px] font-mono text-slate-500 truncate mt-1">
-                    {link.url}
-                  </div>
-                  {link.description && (
-                    <div className="text-[10px] text-slate-500 truncate mt-1">{link.description}</div>
-                  )}
-                </div>
-                <ExternalLink className="w-3.5 h-3.5 text-slate-500 group-hover:text-sky-400 shrink-0 mt-0.5" />
-              </a>
+                {lbl}
+              </button>
             ))}
           </div>
-        </section>
-      )}
-
-      {/* Search & Refresh Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="搜索容器名、镜像、Compose 项目或系统服务..."
-            className="w-full bg-[#0f131b] border border-white/[0.08] focus:border-sky-400/50 focus:outline-none rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder:text-slate-500"
-          />
         </div>
+
         <button
           onClick={load}
           disabled={loading}
-          className="flex items-center gap-1.5 text-xs bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-200 px-3 py-2 rounded-xl cursor-pointer"
+          className="flex items-center gap-1.5 text-xs bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-200 px-3 py-2 rounded-xl cursor-pointer shrink-0"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-sky-400' : ''}`} />
-          <span>刷新状态与实时资源</span>
+          <span>刷新状态</span>
         </button>
       </div>
 
@@ -429,343 +628,721 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
         </div>
       )}
 
-      {/* Docker Section (Primary if Docker is installed) */}
+      {/* Primary View: Project-Centric Docker Services */}
       {dockerAvailable && (
-        <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-              <Box className="w-4 h-4 text-sky-400" />
-              Docker 容器栈 ({containers.filter((c) => c.state === 'running').length} 运行 / {containers.length} 总计)
-            </h2>
-          </div>
-
-          {grouped.length === 0 ? (
-            <div className="bg-[#0f131b] border border-white/[0.06] rounded-2xl p-8 text-center text-xs text-slate-500">
-              {loading ? '正在读取容器与实时资源统计...' : '没有匹配的 Docker 容器'}
+        <div className="space-y-5">
+          {/* Section 1: Compose Project Stacks (Collapsed by Default!) */}
+          <section className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+                <Layers className="w-4 h-4 text-sky-400" />
+                <span>部署服务 ({totalRunningServices}/{totalServices} 运行中)</span>
+              </h2>
+              <span className="text-[11px] font-mono text-slate-500">
+                {stacks.length} 个项目栈 · {standalones.length} 个独立容器 · 共 {containers.length} 个容器
+              </span>
             </div>
-          ) : (
-            grouped.map((group) => (
-              <div
-                key={group.project}
-                className="bg-[#0f131b] border border-white/[0.07] rounded-2xl overflow-hidden"
-              >
-                <div className="px-4 py-2.5 bg-white/[0.02] border-b border-white/[0.06] flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-xs font-semibold text-slate-200 truncate">
-                      {group.project}
-                    </span>
-                    <span className="text-[10px] font-mono text-slate-500">
-                      {group.items.filter((i) => i.state === 'running').length}/{group.items.length} running
-                    </span>
-                  </div>
-                  {group.dir && (
-                    <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                      {group.items.some((i) => i.state === 'running') ? (
-                        <button
-                          onClick={() => handleComposeAction(group.project, group.dir!, 'stop')}
-                          title="停止整个 Compose 栈 (docker compose stop)"
-                          className="flex items-center gap-1 text-[11px] bg-white/[0.04] hover:bg-rose-500/15 border border-white/[0.08] hover:border-rose-500/30 text-slate-300 hover:text-rose-300 px-2 py-1 rounded-lg cursor-pointer"
-                        >
-                          <Square className="w-3 h-3" />
-                          <span>停止栈</span>
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => handleComposeAction(group.project, group.dir!, 'up')}
-                          title="启动整个 Compose 栈 (docker compose up -d)"
-                          className="flex items-center gap-1 text-[11px] bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 px-2 py-1 rounded-lg cursor-pointer"
-                        >
-                          <Play className="w-3 h-3" />
-                          <span>启动栈</span>
-                        </button>
-                      )}
-                      <button
-                        onClick={() => handleOpenComposeEditor(group.project, group.dir!)}
-                        title="在线编辑 docker-compose.yml"
-                        className="flex items-center gap-1 text-[11px] bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.08] text-slate-300 hover:text-white px-2 py-1 rounded-lg cursor-pointer"
-                      >
-                        <FileCode2 className="w-3 h-3 text-sky-400" />
-                        <span>compose.yml</span>
-                      </button>
-                      <button
-                        onClick={() => handleComposeAction(group.project, group.dir!, 'pull_up')}
-                        title="拉取最新镜像并重建 (docker compose pull && up -d)"
-                        className="flex items-center gap-1 text-[11px] bg-sky-500/12 hover:bg-sky-500/22 border border-sky-400/25 text-sky-300 px-2 py-1 rounded-lg cursor-pointer"
-                      >
-                        <ArrowDownToLine className="w-3 h-3" />
-                        <span>更新重建</span>
-                      </button>
-                      <button
-                        onClick={() => onJumpFolder(group.dir!)}
-                        className="flex items-center gap-1 text-[11px] font-mono text-slate-400 hover:text-sky-300 cursor-pointer ml-1"
-                      >
-                        <FolderOpen className="w-3 h-3 text-amber-400/80" />
-                        <span className="truncate max-w-[180px]">{group.dir}</span>
-                      </button>
-                    </div>
-                  )}
-                </div>
 
-                <div className="divide-y divide-white/[0.05]">
-                  {group.items.map((c) => {
-                    const isRunning = c.state === 'running';
-                    return (
-                      <div
-                        key={c.id}
-                        className="px-4 py-3 flex flex-col lg:flex-row lg:items-center justify-between gap-3 hover:bg-white/[0.015]"
-                      >
-                        <div className="min-w-0 flex-1 space-y-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span
-                              className={`w-2 h-2 rounded-full shrink-0 ${
-                                c.health === 'unhealthy'
-                                  ? 'bg-rose-500'
-                                  : isRunning
-                                    ? 'bg-emerald-400'
-                                    : 'bg-slate-600'
-                              }`}
-                            />
-                            <span className="text-xs font-semibold text-white font-mono">
-                              {c.name}
-                            </span>
-                            <span className="text-[11px] text-slate-500 truncate max-w-full sm:max-w-md font-mono">
-                              {c.image}
-                            </span>
-                            {c.health && (
-                              <span
-                                className={`text-[10px] font-mono px-1.5 py-0.2 rounded border ${
-                                  c.health === 'healthy'
-                                    ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-300'
-                                    : 'bg-rose-500/10 border-rose-500/25 text-rose-300'
-                                }`}
+            {stacks.length === 0 && standalones.length === 0 ? (
+              <div className="bg-[#0f131b] border border-white/[0.06] rounded-2xl p-8 text-center text-xs text-slate-500">
+                {loading ? '正在读取部署服务与资源统计...' : '没有匹配的 Docker 服务'}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {stacks.map((stack) => {
+                  const isRunning = stack.runningCount > 0;
+                  const isAllRunning = stack.runningCount === stack.items.length;
+                  const isExpanded = Boolean(expandedStacks[stack.project]) || (query.trim().length > 0 && !stack.project.toLowerCase().includes(query.trim().toLowerCase()));
+                  const statusTone =
+                    stack.unhealthyCount > 0
+                      ? { dot: 'bg-rose-500', pill: 'bg-rose-500/15 border-rose-500/30 text-rose-300', label: `异常 (${stack.unhealthyCount})` }
+                      : isAllRunning
+                        ? { dot: 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]', pill: 'bg-emerald-500/12 border-emerald-500/25 text-emerald-300', label: `运行中 · ${stack.runningCount}/${stack.items.length}` }
+                        : isRunning
+                          ? {
+                              dot: stack.hasOnlyCleanExited ? 'bg-emerald-400' : 'bg-amber-400',
+                              pill: stack.hasOnlyCleanExited
+                                ? 'bg-emerald-500/12 border-emerald-500/25 text-emerald-300'
+                                : 'bg-amber-500/12 border-amber-400/25 text-amber-300',
+                              label: `运行中 · ${stack.runningCount}/${stack.items.length}`,
+                            }
+                          : { dot: 'bg-slate-600', pill: 'bg-white/[0.04] border-white/[0.08] text-slate-400', label: '已停止' };
+
+                  return (
+                    <div
+                      key={stack.project}
+                      className={`bg-[#0f131b] border rounded-2xl overflow-hidden transition-colors ${
+                        isExpanded ? 'border-sky-400/30' : 'border-white/[0.07] hover:border-white/[0.14]'
+                      }`}
+                    >
+                      {/* Main Service Card (Always Visible) */}
+                      <div className="p-4 sm:p-5 space-y-3">
+                        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+                          {/* Left: Identity + Status + Aggregated Metrics */}
+                          <div className="min-w-0 flex-1 space-y-2">
+                            <div className="flex items-center gap-2.5 flex-wrap">
+                              <button
+                                onClick={() => toggleStack(stack.project)}
+                                className="flex items-center gap-2 text-left group cursor-pointer min-w-0"
+                                title={isExpanded ? '收起子容器' : '展开查看子容器'}
                               >
-                                {c.health}
+                                <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${statusTone.dot}`} />
+                                <span className="text-sm sm:text-base font-semibold text-white group-hover:text-sky-300 transition-colors truncate">
+                                  {stack.project}
+                                </span>
+                              </button>
+                              <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border shrink-0 ${statusTone.pill}`}>
+                                {statusTone.label}
                               </span>
-                            )}
-                          </div>
 
-                          <div className="flex flex-wrap items-center gap-2 pl-4 text-[11px]">
-                            <span className="text-slate-400">{c.status}</span>
-                            {c.ports.map((p, idx) =>
-                              p.quickUrl ? (
+                              {/* Aggregated Live CPU & Memory */}
+                              {isRunning && (
+                                <div className="flex items-center gap-2.5 text-[11px] font-mono text-slate-300 bg-[#090b10] border border-white/[0.06] rounded-lg px-2.5 py-0.5">
+                                  <span className="inline-flex items-center gap-1">
+                                    <Cpu className="w-3 h-3 text-sky-400" />
+                                    {stack.totalCpu.toFixed(1)}%
+                                  </span>
+                                  <span className="text-slate-700">·</span>
+                                  <span className="inline-flex items-center gap-1">
+                                    <MemoryStick className="w-3 h-3 text-indigo-400" />
+                                    {stack.totalMemBytes > 0 ? formatBytes(stack.totalMemBytes, 1) : '—'}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Ports / Quick Access URLs + Composition + Directory */}
+                            <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                              {stack.publicPorts.map(({ port, container }, idx) => (
                                 <a
-                                  key={idx}
-                                  href={p.quickUrl}
+                                  key={`pub-${idx}`}
+                                  href={port.quickUrl}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="inline-flex items-center gap-1 font-mono bg-sky-500/10 hover:bg-sky-500/20 border border-sky-400/25 text-sky-300 px-2 py-0.5 rounded-md"
+                                  className="inline-flex items-center gap-1 font-mono bg-sky-500/12 hover:bg-sky-500/22 border border-sky-400/25 text-sky-300 px-2 py-0.5 rounded-md transition-colors"
                                 >
-                                  <span>
-                                    :{p.hostPort}→{p.containerPort}
-                                  </span>
+                                  <span>:{port.hostPort}</span>
+                                  <span className="text-sky-400/70 text-[10px]">{container}</span>
                                   <ExternalLink className="w-2.5 h-2.5" />
                                 </a>
-                              ) : (
+                              ))}
+                              {stack.internalPorts.slice(0, 4).map(({ port, container }, idx) => (
                                 <span
-                                  key={idx}
-                                  className="font-mono bg-white/[0.04] border border-white/[0.06] text-slate-400 px-2 py-0.5 rounded-md"
+                                  key={`int-${idx}`}
+                                  className="inline-flex items-center gap-1 font-mono bg-white/[0.03] border border-white/[0.06] text-slate-400 px-2 py-0.5 rounded-md"
                                 >
-                                  {p.hostIp}:{p.hostPort}→{p.containerPort}
+                                  <span>{port.hostIp === '127.0.0.1' ? '本机' : port.hostIp}:{port.hostPort}</span>
+                                  <span className="text-slate-500 text-[10px]">{container}</span>
                                 </span>
-                              )
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Live Container Stats + Actions */}
-                        <div className="flex flex-wrap items-center justify-between lg:justify-end gap-2 sm:gap-4 pl-4 lg:pl-0 shrink-0">
-                          {isRunning && (c.cpuPercent !== undefined || c.memUsage) && (
-                            <div className="flex items-center gap-3 text-[11px] font-mono text-slate-400">
-                              <span className="flex items-center gap-1">
-                                <Cpu className="w-3 h-3 text-sky-400/70" />
-                                {(c.cpuPercent ?? 0).toFixed(1)}%
-                              </span>
-                              <span>{c.memUsage?.split('/')[0]?.trim() || '—'}</span>
+                              ))}
+                              {stack.dir && (
+                                <button
+                                  onClick={() => onJumpFolder(stack.dir!)}
+                                  title={`打开项目目录 ${stack.dir}`}
+                                  className="inline-flex items-center gap-1 font-mono text-slate-400 hover:text-sky-300 bg-[#090b10] border border-white/[0.06] hover:border-sky-400/30 px-2 py-0.5 rounded-md cursor-pointer max-w-full"
+                                >
+                                  <FolderOpen className="w-3 h-3 text-amber-400/80 shrink-0" />
+                                  <span className="truncate max-w-[220px]">{stack.dir}</span>
+                                </button>
+                              )}
                             </div>
-                          )}
 
-                          <div className="flex items-center gap-1.5 flex-wrap">
+                            {/* Compact Component Preview & Expand Trigger */}
+                            <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                              <button
+                                onClick={() => toggleStack(stack.project)}
+                                className="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-sky-300 transition-colors cursor-pointer"
+                              >
+                                {isExpanded ? (
+                                  <ChevronDown className="w-3.5 h-3.5 text-sky-400" />
+                                ) : (
+                                  <ChevronRight className="w-3.5 h-3.5" />
+                                )}
+                                <span>
+                                  {isExpanded ? '收起子容器' : `展开 ${stack.items.length} 个子容器`}
+                                </span>
+                              </button>
+                              {!isExpanded && (
+                                <div className="flex flex-wrap items-center gap-1 text-[10px] font-mono text-slate-500">
+                                  {stack.items.slice(0, 6).map((c) => (
+                                    <span
+                                      key={c.id}
+                                      className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-white/[0.03] text-slate-400"
+                                    >
+                                      <span
+                                        className={`w-1.5 h-1.5 rounded-full ${
+                                          c.health === 'unhealthy'
+                                            ? 'bg-rose-500'
+                                            : c.state === 'running'
+                                              ? 'bg-emerald-400/80'
+                                              : 'bg-slate-600'
+                                        }`}
+                                      />
+                                      {shortServiceLabel(c, stack.project)}
+                                    </span>
+                                  ))}
+                                  {stack.items.length > 6 && <span>+{stack.items.length - 6}</span>}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Right: Project-Level Primary Action Controls */}
+                          <div className="flex items-center gap-1.5 flex-wrap lg:justify-end shrink-0">
                             {isRunning ? (
                               <>
                                 <button
-                                  onClick={() => handleDockerAction(c, 'restart')}
-                                  disabled={busyId !== null}
-                                  title="重启容器"
-                                  className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-sky-500/20 border border-white/[0.07] text-slate-300 hover:text-sky-300 cursor-pointer disabled:opacity-40"
+                                  onClick={() => handleComposeAction(stack.project, stack.dir, 'restart')}
+                                  className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-xl bg-white/[0.04] hover:bg-sky-500/20 border border-white/[0.08] text-slate-200 hover:text-sky-300 transition-colors cursor-pointer"
                                 >
-                                  <RotateCw
-                                    className={`w-3 h-3 ${busyId === `${c.id}-restart` ? 'animate-spin' : ''}`}
-                                  />
+                                  <RotateCw className="w-3.5 h-3.5" />
                                   <span>重启</span>
                                 </button>
                                 <button
-                                  onClick={() => handleDockerAction(c, 'stop')}
-                                  disabled={busyId !== null}
-                                  title="停止容器"
-                                  className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-rose-500/20 border border-white/[0.07] hover:border-rose-500/30 text-slate-300 hover:text-rose-300 cursor-pointer disabled:opacity-40"
+                                  onClick={() => handleComposeAction(stack.project, stack.dir, 'stop')}
+                                  className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-xl bg-white/[0.04] hover:bg-rose-500/18 border border-white/[0.08] hover:border-rose-500/30 text-slate-200 hover:text-rose-300 transition-colors cursor-pointer"
                                 >
-                                  {busyId === `${c.id}-stop` ? (
-                                    <Loader2 className="w-3 h-3 animate-spin" />
-                                  ) : (
-                                    <Square className="w-3 h-3" />
-                                  )}
+                                  <Square className="w-3.5 h-3.5" />
                                   <span>停止</span>
                                 </button>
                               </>
                             ) : (
                               <button
-                                onClick={() => handleDockerAction(c, 'start')}
-                                disabled={busyId !== null}
-                                title="启动容器"
-                                className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-medium cursor-pointer disabled:opacity-40"
+                                onClick={() => handleComposeAction(stack.project, stack.dir, 'up')}
+                                className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-xl bg-emerald-500/18 hover:bg-emerald-500/28 border border-emerald-500/35 text-emerald-300 font-semibold transition-colors cursor-pointer"
                               >
-                                {busyId === `${c.id}-start` ? (
-                                  <Loader2 className="w-3 h-3 animate-spin" />
-                                ) : (
-                                  <Play className="w-3 h-3" />
-                                )}
+                                <Play className="w-3.5 h-3.5" />
                                 <span>启动</span>
                               </button>
                             )}
-                            <button
-                              onClick={() => handleOpenDockerLogs(c)}
-                              title="查看容器日志"
-                              className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.07] text-slate-300 hover:text-white cursor-pointer"
-                            >
-                              <FileText className="w-3 h-3" />
-                              <span>日志</span>
-                            </button>
-                            {isRunning && onOpenContainerTerminal && (
-                              <button
-                                onClick={() => onOpenContainerTerminal(c.name)}
-                                title="进入容器终端 (docker exec)"
-                                className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-emerald-500/20 border border-white/[0.07] text-slate-300 hover:text-emerald-300 cursor-pointer"
-                              >
-                                <Terminal className="w-3 h-3" />
-                                <span>终端</span>
-                              </button>
+
+                            {stack.dir && (
+                              <>
+                                <button
+                                  onClick={() => handleComposeAction(stack.project, stack.dir, 'pull_up')}
+                                  title="拉取最新镜像并重建"
+                                  className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-xl bg-sky-500/10 hover:bg-sky-500/20 border border-sky-400/25 text-sky-300 transition-colors cursor-pointer"
+                                >
+                                  <ArrowDownToLine className="w-3.5 h-3.5" />
+                                  <span>更新</span>
+                                </button>
+                                <button
+                                  onClick={() => handleOpenComposeEditor(stack.project, stack.dir!)}
+                                  title="查看 / 编辑 compose.yml"
+                                  className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.08] text-slate-300 hover:text-white transition-colors cursor-pointer"
+                                >
+                                  <FileCode2 className="w-3.5 h-3.5 text-slate-400" />
+                                  <span>配置</span>
+                                </button>
+                              </>
                             )}
+
+                            <button
+                              onClick={() =>
+                                openDeleteModal({
+                                  kind: 'stack',
+                                  project: stack.project,
+                                  dir: stack.dir,
+                                  containers: stack.items,
+                                })
+                              }
+                              title="删除整个服务栈"
+                              className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-xl bg-white/[0.03] hover:bg-rose-500/18 border border-white/[0.08] hover:border-rose-500/35 text-slate-400 hover:text-rose-300 transition-colors cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>删除</span>
+                            </button>
                           </div>
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
+
+                      {/* Collapsible Sub-Containers Drawer */}
+                      {isExpanded && (
+                        <div className="border-t border-white/[0.06] bg-[#0a0d14] divide-y divide-white/[0.04]">
+                          {stack.items.map((c) => {
+                            const cRunning = c.state === 'running';
+                            return (
+                              <div
+                                key={c.id}
+                                className="px-4 sm:px-5 py-2.5 flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 hover:bg-white/[0.015]"
+                              >
+                                <div className="min-w-0 flex-1 space-y-1">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span
+                                      className={`w-2 h-2 rounded-full shrink-0 ${
+                                        c.health === 'unhealthy'
+                                          ? 'bg-rose-500'
+                                          : cRunning
+                                            ? 'bg-emerald-400'
+                                            : 'bg-slate-600'
+                                      }`}
+                                    />
+                                    <span className="text-xs font-semibold text-slate-100 font-mono">
+                                      {c.name}
+                                    </span>
+                                    <span className="text-[11px] text-slate-500 truncate max-w-full sm:max-w-sm font-mono">
+                                      {c.image}
+                                    </span>
+                                    {c.health && (
+                                      <span
+                                        className={`text-[10px] font-mono px-1.5 py-0.2 rounded border ${
+                                          c.health === 'healthy'
+                                            ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-300'
+                                            : 'bg-rose-500/10 border-rose-500/25 text-rose-300'
+                                        }`}
+                                      >
+                                        {c.health}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-2 pl-4 text-[11px] text-slate-400">
+                                    <span>{c.status}</span>
+                                    {cRunning && (c.cpuPercent !== undefined || c.memUsage) && (
+                                      <span className="font-mono text-[10px] text-slate-500">
+                                        CPU {(c.cpuPercent ?? 0).toFixed(1)}% · {c.memUsage?.split('/')[0]?.trim() || '—'}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-1.5 flex-wrap pl-4 lg:pl-0 shrink-0">
+                                  {cRunning ? (
+                                    <>
+                                      <button
+                                        onClick={() => handleDockerAction(c, 'restart')}
+                                        disabled={busyId !== null}
+                                        className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-sky-500/20 border border-white/[0.07] text-slate-300 hover:text-sky-300 cursor-pointer disabled:opacity-40"
+                                      >
+                                        <RotateCw className={`w-3 h-3 ${busyId === `${c.id}-restart` ? 'animate-spin' : ''}`} />
+                                        <span>重启</span>
+                                      </button>
+                                      <button
+                                        onClick={() => handleDockerAction(c, 'stop')}
+                                        disabled={busyId !== null}
+                                        className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-rose-500/20 border border-white/[0.07] text-slate-300 hover:text-rose-300 cursor-pointer disabled:opacity-40"
+                                      >
+                                        {busyId === `${c.id}-stop` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Square className="w-3 h-3" />}
+                                        <span>停止</span>
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <button
+                                      onClick={() => handleDockerAction(c, 'start')}
+                                      disabled={busyId !== null}
+                                      className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 cursor-pointer disabled:opacity-40"
+                                    >
+                                      {busyId === `${c.id}-start` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                                      <span>启动</span>
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={() => handleOpenDockerLogs(c)}
+                                    className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.07] text-slate-300 hover:text-white cursor-pointer"
+                                  >
+                                    <FileText className="w-3 h-3" />
+                                    <span>日志</span>
+                                  </button>
+                                  {cRunning && onOpenContainerTerminal && (
+                                    <button
+                                      onClick={() => onOpenContainerTerminal(c.name)}
+                                      className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-emerald-500/20 border border-white/[0.07] text-slate-300 hover:text-emerald-300 cursor-pointer"
+                                    >
+                                      <Terminal className="w-3 h-3" />
+                                      <span>终端</span>
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={() => openDeleteModal({ kind: 'container', container: c })}
+                                    title="删除此子容器"
+                                    className="p-1.5 rounded-lg bg-white/[0.03] hover:bg-rose-500/18 border border-white/[0.07] text-slate-500 hover:text-rose-300 cursor-pointer"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-            ))
+            )}
+          </section>
+
+          {/* Section 2: Standalone Single-Container Services */}
+          {standalones.length > 0 && (
+            <section className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                  <Box className="w-3.5 h-3.5 text-sky-400" />
+                  <span>独立单体服务 ({standalones.filter((c) => c.state === 'running').length}/{standalones.length} 运行)</span>
+                </h3>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {standalones.map((c) => {
+                  const isRunning = c.state === 'running';
+                  return (
+                    <div
+                      key={c.id}
+                      className="bg-[#0f131b] border border-white/[0.07] hover:border-white/[0.14] rounded-2xl p-4 space-y-3 transition-colors flex flex-col justify-between"
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span
+                                className={`w-2 h-2 rounded-full shrink-0 ${
+                                  c.health === 'unhealthy'
+                                    ? 'bg-rose-500'
+                                    : isRunning
+                                      ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.45)]'
+                                      : 'bg-slate-600'
+                                }`}
+                              />
+                              <span className="text-sm font-semibold text-white font-mono truncate">
+                                {c.name}
+                              </span>
+                              <span
+                                className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full border ${
+                                  isRunning
+                                    ? 'bg-emerald-500/12 border-emerald-500/25 text-emerald-300'
+                                    : 'bg-white/[0.04] border-white/[0.08] text-slate-400'
+                                }`}
+                              >
+                                {isRunning ? '运行中' : '已停止'}
+                              </span>
+                            </div>
+                            <div className="text-[11px] font-mono text-slate-500 truncate mt-1 pl-4">
+                              {c.image}
+                            </div>
+                          </div>
+
+                          {isRunning && (c.cpuPercent !== undefined || c.memUsage) && (
+                            <div className="text-[11px] font-mono text-slate-400 shrink-0 text-right">
+                              <div className="text-slate-200">{(c.cpuPercent ?? 0).toFixed(1)}% CPU</div>
+                              <div className="text-[10px] text-slate-500">{c.memUsage?.split('/')[0]?.trim() || '—'}</div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-1.5 pl-4 text-[11px]">
+                          <span className="text-slate-400">{c.status}</span>
+                          {c.ports.map((p, idx) =>
+                            p.quickUrl ? (
+                              <a
+                                key={idx}
+                                href={p.quickUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 font-mono bg-sky-500/12 hover:bg-sky-500/22 border border-sky-400/25 text-sky-300 px-2 py-0.5 rounded-md"
+                              >
+                                <span>:{p.hostPort}</span>
+                                <ExternalLink className="w-2.5 h-2.5" />
+                              </a>
+                            ) : (
+                              <span
+                                key={idx}
+                                className="font-mono bg-white/[0.03] border border-white/[0.06] text-slate-400 px-2 py-0.5 rounded-md"
+                              >
+                                {p.hostIp}:{p.hostPort}→{p.containerPort}
+                              </span>
+                            )
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2 pt-2.5 border-t border-white/[0.05] flex-wrap">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {isRunning ? (
+                            <>
+                              <button
+                                onClick={() => handleDockerAction(c, 'restart')}
+                                disabled={busyId !== null}
+                                className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg bg-white/[0.04] hover:bg-sky-500/20 border border-white/[0.07] text-slate-200 hover:text-sky-300 cursor-pointer disabled:opacity-40"
+                              >
+                                <RotateCw className={`w-3 h-3 ${busyId === `${c.id}-restart` ? 'animate-spin' : ''}`} />
+                                <span>重启</span>
+                              </button>
+                              <button
+                                onClick={() => handleDockerAction(c, 'stop')}
+                                disabled={busyId !== null}
+                                className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg bg-white/[0.04] hover:bg-rose-500/20 border border-white/[0.07] text-slate-200 hover:text-rose-300 cursor-pointer disabled:opacity-40"
+                              >
+                                {busyId === `${c.id}-stop` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Square className="w-3 h-3" />}
+                                <span>停止</span>
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => handleDockerAction(c, 'start')}
+                              disabled={busyId !== null}
+                              className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg bg-emerald-500/18 hover:bg-emerald-500/28 border border-emerald-500/35 text-emerald-300 font-semibold cursor-pointer disabled:opacity-40"
+                            >
+                              {busyId === `${c.id}-start` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                              <span>启动</span>
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleOpenDockerLogs(c)}
+                            className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.07] text-slate-300 hover:text-white cursor-pointer"
+                          >
+                            <FileText className="w-3 h-3" />
+                            <span>日志</span>
+                          </button>
+                          {isRunning && onOpenContainerTerminal && (
+                            <button
+                              onClick={() => onOpenContainerTerminal(c.name)}
+                              className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-emerald-500/20 border border-white/[0.07] text-slate-300 hover:text-emerald-300 cursor-pointer"
+                            >
+                              <Terminal className="w-3 h-3" />
+                              <span>终端</span>
+                            </button>
+                          )}
+                        </div>
+
+                        <button
+                          onClick={() => openDeleteModal({ kind: 'container', container: c })}
+                          title="删除容器"
+                          className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.03] hover:bg-rose-500/18 border border-white/[0.07] hover:border-rose-500/35 text-slate-400 hover:text-rose-300 cursor-pointer"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>删除</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
           )}
-        </section>
+        </div>
       )}
 
-      {/* Systemd Services Section (Primary for non-Docker nodes, secondary otherwise) */}
-      <section className="space-y-3">
-        <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-          <ServerCog className="w-4 h-4 text-indigo-400" />
-          宿主机 Systemd 服务 ({filteredSystemd.filter((s) => s.activeState === 'active').length} 运行 / {filteredSystemd.length} 总计)
-        </h2>
+      {/* Systemd Host Services (Collapsed by default on Docker nodes, expanded on non-Docker nodes) */}
+      <section className="bg-[#0f131b] border border-white/[0.06] rounded-2xl overflow-hidden">
+        <button
+          onClick={() => setSystemdExpanded((v) => !v)}
+          className="w-full px-4 sm:px-5 py-3.5 flex flex-wrap items-center justify-between gap-2 text-left hover:bg-white/[0.02] transition-colors cursor-pointer"
+        >
+          <div className="flex items-center gap-2 text-xs font-semibold text-slate-200">
+            {showSystemdList ? (
+              <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+            ) : (
+              <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+            )}
+            <ServerCog className="w-4 h-4 text-indigo-400 shrink-0" />
+            <span>宿主机 Systemd 后台服务</span>
+            <span className="text-[10px] font-mono font-normal px-2 py-0.5 rounded-full bg-white/[0.05] text-slate-400">
+              {filteredSystemd.filter((s) => s.activeState === 'active').length} 运行 / {filteredSystemd.length} 总计
+            </span>
+          </div>
+          <span className="text-[11px] text-slate-500">
+            {showSystemdList ? '收起' : '非 Docker 的常驻服务（如代理 / 反代），按需展开'}
+          </span>
+        </button>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {filteredSystemd.map((svc) => {
-            const isActive = svc.activeState === 'active';
-            const isFailed = svc.activeState === 'failed';
-            const isProtected = PROTECTED_SYSTEMD.has(svc.name);
-            return (
-              <div
-                key={svc.name}
-                className="bg-[#0f131b] border border-white/[0.07] rounded-xl px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
-              >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span
-                      className={`w-2 h-2 rounded-full shrink-0 ${
-                        isActive ? 'bg-emerald-400' : isFailed ? 'bg-rose-500' : 'bg-slate-600'
-                      }`}
-                    />
-                    <span className="text-xs font-semibold font-mono text-white truncate">
-                      {svc.name}
-                    </span>
-                    <span
-                      className={`text-[10px] font-mono px-1.5 py-0.2 rounded border ${
-                        isActive
-                          ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
-                          : isFailed
-                            ? 'bg-rose-500/10 border-rose-500/25 text-rose-300'
-                            : 'bg-white/[0.04] border-white/[0.08] text-slate-400'
-                      }`}
-                    >
-                      {svc.subState || svc.activeState}
-                    </span>
+        {showSystemdList && (
+          <div className="p-4 sm:p-5 pt-2 border-t border-white/[0.05] grid grid-cols-1 md:grid-cols-2 gap-3">
+            {filteredSystemd.map((svc) => {
+              const isActive = svc.activeState === 'active';
+              const isFailed = svc.activeState === 'failed';
+              const isProtected = PROTECTED_SYSTEMD.has(svc.name);
+              return (
+                <div
+                  key={svc.name}
+                  className="bg-[#090b10] border border-white/[0.06] rounded-xl px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span
+                        className={`w-2 h-2 rounded-full shrink-0 ${
+                          isActive ? 'bg-emerald-400' : isFailed ? 'bg-rose-500' : 'bg-slate-600'
+                        }`}
+                      />
+                      <span className="text-xs font-semibold font-mono text-white truncate">
+                        {svc.name}
+                      </span>
+                      <span
+                        className={`text-[10px] font-mono px-1.5 py-0.2 rounded border ${
+                          isActive
+                            ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+                            : isFailed
+                              ? 'bg-rose-500/10 border-rose-500/25 text-rose-300'
+                              : 'bg-white/[0.04] border-white/[0.08] text-slate-400'
+                        }`}
+                      >
+                        {svc.subState || svc.activeState}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-400 truncate mt-0.5 pl-4">
+                      {svc.description}
+                    </div>
                   </div>
-                  <div className="text-[11px] text-slate-400 truncate mt-0.5 pl-4">
-                    {svc.description}
+                  <div className="flex items-center gap-1.5 pl-4 sm:pl-0 shrink-0 flex-wrap">
+                    {isActive ? (
+                      <>
+                        <button
+                          onClick={() => handleSystemdAction(svc, 'restart')}
+                          disabled={busyId !== null}
+                          className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-sky-500/20 border border-white/[0.07] text-slate-300 hover:text-sky-300 cursor-pointer disabled:opacity-40"
+                        >
+                          <RotateCw className={`w-3 h-3 ${busyId === `svc-${svc.name}-restart` ? 'animate-spin' : ''}`} />
+                          <span>重启</span>
+                        </button>
+                        {!isProtected ? (
+                          <button
+                            onClick={() => handleSystemdAction(svc, 'stop')}
+                            disabled={busyId !== null}
+                            className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-rose-500/20 border border-white/[0.07] text-slate-300 hover:text-rose-300 cursor-pointer disabled:opacity-40"
+                          >
+                            {busyId === `svc-${svc.name}-stop` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Square className="w-3 h-3" />}
+                            <span>停止</span>
+                          </button>
+                        ) : (
+                          <span
+                            title="核心连接服务受保护，禁止通过面板停止"
+                            className="text-[10px] font-mono text-slate-600 px-1.5 py-1 rounded bg-white/[0.02]"
+                          >
+                            保护
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => handleSystemdAction(svc, 'start')}
+                        disabled={busyId !== null}
+                        className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-medium cursor-pointer disabled:opacity-40"
+                      >
+                        {busyId === `svc-${svc.name}-start` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                        <span>启动</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleOpenSystemdLogs(svc)}
+                      className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.07] text-slate-300 hover:text-white cursor-pointer"
+                    >
+                      <FileText className="w-3 h-3" />
+                      <span>日志</span>
+                    </button>
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5 pl-4 sm:pl-0 shrink-0 flex-wrap">
-                  {isActive ? (
-                    <>
-                      <button
-                        onClick={() => handleSystemdAction(svc, 'restart')}
-                        disabled={busyId !== null}
-                        title="重启服务"
-                        className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-sky-500/20 border border-white/[0.07] text-slate-300 hover:text-sky-300 cursor-pointer disabled:opacity-40"
-                      >
-                        <RotateCw
-                          className={`w-3 h-3 ${busyId === `svc-${svc.name}-restart` ? 'animate-spin' : ''}`}
-                        />
-                        <span>重启</span>
-                      </button>
-                      {!isProtected ? (
-                        <button
-                          onClick={() => handleSystemdAction(svc, 'stop')}
-                          disabled={busyId !== null}
-                          title="停止服务"
-                          className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-rose-500/20 border border-white/[0.07] hover:border-rose-500/30 text-slate-300 hover:text-rose-300 cursor-pointer disabled:opacity-40"
-                        >
-                          {busyId === `svc-${svc.name}-stop` ? (
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <Square className="w-3 h-3" />
-                          )}
-                          <span>停止</span>
-                        </button>
-                      ) : (
-                        <span
-                          title="核心连接服务受保护，禁止通过面板停止"
-                          className="text-[10px] font-mono text-slate-600 px-1.5 py-1 rounded bg-white/[0.02]"
-                        >
-                          保护
-                        </span>
-                      )}
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => handleSystemdAction(svc, 'start')}
-                      disabled={busyId !== null}
-                      title="启动服务"
-                      className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-medium cursor-pointer disabled:opacity-40"
-                    >
-                      {busyId === `svc-${svc.name}-start` ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                      ) : (
-                        <Play className="w-3 h-3" />
-                      )}
-                      <span>启动</span>
-                    </button>
-                  )}
-                  <button
-                    onClick={() => handleOpenSystemdLogs(svc)}
-                    title="查看 journalctl 日志"
-                    className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.07] text-slate-300 hover:text-white cursor-pointer"
-                  >
-                    <FileText className="w-3 h-3" />
-                    <span>日志</span>
-                  </button>
+              );
+            })}
+            {filteredSystemd.length === 0 && (
+              <div className="col-span-full text-center py-4 text-xs text-slate-500">没有匹配的 Systemd 服务</div>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* Safe Delete Confirmation Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-[#0f131b] border border-rose-500/30 rounded-2xl w-full max-w-md max-h-[90dvh] overflow-y-auto p-5 shadow-2xl space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-4 h-4 text-rose-400" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-white">
+                    {deleteTarget.kind === 'stack'
+                      ? `删除服务「${deleteTarget.project}」`
+                      : `删除容器「${deleteTarget.container.name}」`}
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    {deleteTarget.kind === 'stack'
+                      ? `将停止并移除该栈下的 ${deleteTarget.containers.length} 个容器`
+                      : '将强制停止并移除该 Docker 容器'}
+                  </p>
                 </div>
               </div>
-            );
-          })}
+              <button
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+                className="text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {deleteTarget.kind === 'stack' && (
+              <div className="bg-[#090b10] border border-white/[0.06] rounded-xl p-3 space-y-1.5">
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  包含容器
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {deleteTarget.containers.map((c) => (
+                    <span
+                      key={c.id}
+                      className="text-[11px] font-mono px-2 py-0.5 rounded bg-white/[0.04] border border-white/[0.06] text-slate-300"
+                    >
+                      {c.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-2.5 text-xs">
+              <label className="flex items-start gap-2.5 bg-[#090b10] border border-white/[0.06] rounded-xl p-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={deleteVolumes}
+                  onChange={(e) => setDeleteVolumes(e.target.checked)}
+                  className="mt-0.5 accent-rose-500 cursor-pointer"
+                />
+                <div>
+                  <div className="text-slate-200 font-medium">同时删除关联数据卷 (Volumes)</div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">
+                    默认不勾选以保留数据库与持久化数据；勾选后数据卷将被清空。
+                  </div>
+                </div>
+              </label>
+
+              {deleteTarget.kind === 'stack' && isSafeDirHint(deleteTarget.dir) && (
+                <label className="flex items-start gap-2.5 bg-rose-500/[0.06] border border-rose-500/20 rounded-xl p-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={deleteDir}
+                    onChange={(e) => setDeleteDir(e.target.checked)}
+                    className="mt-0.5 accent-rose-500 cursor-pointer"
+                  />
+                  <div className="min-w-0">
+                    <div className="text-rose-200 font-medium">同时彻底删除项目目录（不可恢复）</div>
+                    <div className="text-[11px] font-mono text-rose-300/70 break-all mt-0.5">
+                      {deleteTarget.dir}
+                    </div>
+                  </div>
+                </label>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => setDeleteTarget(null)}
+                className="px-3.5 py-2 rounded-xl text-xs text-slate-400 hover:text-white cursor-pointer"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={handleConfirmDelete}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs bg-rose-500 hover:bg-rose-400 text-white font-semibold cursor-pointer disabled:opacity-50"
+              >
+                {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                <span>{deleting ? '删除中...' : '确认删除'}</span>
+              </button>
+            </div>
+          </div>
         </div>
-      </section>
+      )}
 
       {/* Logs Modal */}
       {logsModal && (

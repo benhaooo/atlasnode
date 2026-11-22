@@ -549,6 +549,20 @@ func main() {
 			return
 		}
 		action := r.PathValue("action")
+		if action == "remove" {
+			var body struct {
+				RemoveVolumes bool `json:"removeVolumes"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			out, err := runDockerRemove(*srv, r.PathValue("containerId"), body.RemoveVolumes)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+				return
+			}
+			snapshotCache.Invalidate(srv.ID)
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "output": out})
+			return
+		}
 		if action != "start" && action != "stop" && action != "restart" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "不支持的操作"})
 			return
@@ -1154,21 +1168,24 @@ func main() {
 			return
 		}
 		var body struct {
-			Dir     string `json:"dir"`
-			Project string `json:"project"`
-			Action  string `json:"action"`
+			Dir           string `json:"dir"`
+			Project       string `json:"project"`
+			Action        string `json:"action"`
+			RemoveVolumes bool   `json:"removeVolumes"`
+			RemoveDir     bool   `json:"removeDir"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		dir := strings.TrimSpace(body.Dir)
-		if !strings.HasPrefix(dir, "/") {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "非法的 Compose 目录"})
+		project := strings.TrimSpace(body.Project)
+		if !strings.HasPrefix(dir, "/") && project == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "非法的 Compose 目录或项目名"})
 			return
 		}
 		action := body.Action
-		if action != "pull_up" && action != "up" && action != "restart" && action != "stop" {
+		if action != "pull_up" && action != "up" && action != "restart" && action != "stop" && action != "remove" {
 			action = "up"
 		}
-		proc, err := spawnComposeAction(*srv, dir, strings.TrimSpace(body.Project), action)
+		proc, err := spawnComposeAction(*srv, dir, project, action, body.RemoveVolumes, body.RemoveDir)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return

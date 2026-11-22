@@ -392,6 +392,41 @@ def get_ports():
         ports.append(item)
     return ports
 
+def has_active_nft_input(nft_text):
+    if not nft_text or 'hook input' not in nft_text:
+        return False
+    in_chain = False
+    is_input_hook = False
+    has_blocking = False
+    depth = 0
+    for line in nft_text.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if not in_chain and re.match(r'^chain\s+\S+\s*\{', s):
+            in_chain = True
+            is_input_hook = False
+            has_blocking = False
+            depth = s.count('{') - s.count('}')
+            if depth <= 0:
+                in_chain = False
+            continue
+        if in_chain:
+            if 'hook input' in s:
+                is_input_hook = True
+                if re.search(r'policy\s+(drop|reject)\b', s):
+                    has_blocking = True
+            elif not s.startswith('#') and not s.startswith('type '):
+                code = re.sub(r'"[^"]*"', '', s.split('#', 1)[0])
+                if re.search(r'\b(drop|reject)\b', code):
+                    has_blocking = True
+            depth += s.count('{') - s.count('}')
+            if depth <= 0:
+                if is_input_hook and has_blocking:
+                    return True
+                in_chain = False
+    return False
+
 def get_firewall_summary():
     if shutil.which('ufw'):
         st = run(['ufw', 'status'])
@@ -399,7 +434,7 @@ def get_firewall_summary():
             return {'engine': 'ufw', 'active': True}
     if shutil.which('nft'):
         nft_out = run(['nft', 'list', 'ruleset'])
-        if 'hook input' in nft_out and ('drop' in nft_out or 'reject' in nft_out):
+        if has_active_nft_input(nft_out):
             return {'engine': 'nftables', 'active': True}
     if shutil.which('firewall-cmd'):
         st = run(['firewall-cmd', '--state']).strip()
@@ -1375,24 +1410,63 @@ for line in run(['ss', '-tulnp']).splitlines()[1:]:
     seen[key] = item
     ports.append(item)
 
+def has_active_nft_input(nft_text):
+    if not nft_text or 'hook input' not in nft_text:
+        return False
+    in_chain = False
+    is_input_hook = False
+    has_blocking = False
+    depth = 0
+    for line in nft_text.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if not in_chain and re.match(r'^chain\s+\S+\s*\{', s):
+            in_chain = True
+            is_input_hook = False
+            has_blocking = False
+            depth = s.count('{') - s.count('}')
+            if depth <= 0:
+                in_chain = False
+            continue
+        if in_chain:
+            if 'hook input' in s:
+                is_input_hook = True
+                if re.search(r'policy\s+(drop|reject)\b', s):
+                    has_blocking = True
+            elif not s.startswith('#') and not s.startswith('type '):
+                code = re.sub(r'"[^"]*"', '', s.split('#', 1)[0])
+                if re.search(r'\b(drop|reject)\b', code):
+                    has_blocking = True
+            depth += s.count('{') - s.count('}')
+            if depth <= 0:
+                if is_input_hook and has_blocking:
+                    return True
+                in_chain = False
+    return False
+
 raw_ipt = ''
 nft_handles = ''
+nft_out_cached = ''
 if not active and shutil.which('nft'):
-    nft_out = run(['nft', '-a', 'list', 'ruleset'])
-    if 'hook input' in nft_out and ('drop' in nft_out or 'reject' in nft_out):
+    nft_out_cached = run(['nft', '-a', 'list', 'ruleset'])
+    if has_active_nft_input(nft_out_cached):
         engine = 'nftables'
         active = True
         default_in = 'drop (nftables)'
         default_out = 'accept'
-        raw_ipt = nft_out[:16000]
-        nft_handles = nft_out[:24000]
+        raw_ipt = nft_out_cached[:16000]
+        nft_handles = nft_out_cached[:24000]
+
+if not active and default_in == 'unknown':
+    default_in = 'accept'
+    default_out = 'accept'
 
 if not raw_ipt:
     raw_ipt = run(['iptables', '-L', 'INPUT', '-n', '-v', '--line-numbers'])
     if shutil.which('nft'):
-        nft_out = run(['nft', '-a', 'list', 'ruleset'])
+        nft_out = nft_out_cached or run(['nft', '-a', 'list', 'ruleset'])
         if nft_out:
-            nft_handles = nft_out[:24000]
             raw_ipt = (raw_ipt + '\n\n=== nftables ===\n' + nft_out)[:16000]
 
 print(json.dumps({

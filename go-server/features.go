@@ -462,7 +462,7 @@ func parseNftRulesFromText(rawNft string) ([]NftRule, *NftTarget) {
 		if curTable == "" || curChain == "" || strings.ToLower(curChain) != "input" {
 			continue
 		}
-		if target == nil && !strings.HasPrefix(curTable, "ip filter") {
+		if target == nil && !strings.HasPrefix(curTable, "ip filter") && !strings.HasPrefix(curTable, "ip6 filter") {
 			target = &NftTarget{Table: curTable, Chain: curChain}
 		}
 		hm := reNftHandle.FindStringSubmatch(line)

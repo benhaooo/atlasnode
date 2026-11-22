@@ -46,6 +46,24 @@ func TestNftAndBackrouteParsing(t *testing.T) {
 		t.Fatalf("unexpected rule[1]: %+v", rules[1])
 	}
 
+	dockerOnlyNft := `table ip filter {
+	chain INPUT {
+		type filter hook input priority filter; policy accept;
+	}
+	chain FORWARD {
+		type filter hook forward priority filter; policy drop;
+	}
+}
+table ip6 filter {
+	chain INPUT {
+		type filter hook input priority filter; policy accept;
+	}
+}`
+	dockerRules, dockerTarget := parseNftRulesFromText(dockerOnlyNft)
+	if len(dockerRules) != 0 || dockerTarget != nil {
+		t.Fatalf("expected no rules/target for docker-only nftables, got rules=%d target=%+v", len(dockerRules), dockerTarget)
+	}
+
 	bt := `广东 电信 电信CN2GIA [优质线路]
 地理路径：中国香港 -> 中国广东广州   自治系统路径：AS4809 -> AS4134
 1  2.3ms  10.0.0.1`

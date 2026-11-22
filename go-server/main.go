@@ -1164,7 +1164,7 @@ func main() {
 			return
 		}
 		action := body.Action
-		if action != "pull_up" && action != "up" && action != "restart" {
+		if action != "pull_up" && action != "up" && action != "restart" && action != "stop" {
 			action = "up"
 		}
 		proc, err := spawnComposeAction(*srv, dir, action)

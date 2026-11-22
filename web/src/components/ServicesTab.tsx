@@ -139,15 +139,18 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
   const handleComposeAction = async (
     project: string,
     dir: string,
-    action: 'pull_up' | 'up' | 'restart'
+    action: 'pull_up' | 'up' | 'restart' | 'stop'
   ) => {
     const label =
       action === 'pull_up'
         ? '拉取最新镜像并重建 (pull && up -d)'
         : action === 'up'
-          ? '应用配置并重建 (up -d)'
-          : '重启栈 (restart)';
+          ? '启动 / 应用配置 (up -d)'
+          : action === 'stop'
+            ? '停止整个栈 (stop)'
+            : '重启栈 (restart)';
     if (action === 'pull_up' && !confirm(`确认对 ${project} 执行 docker compose pull && up -d？`)) return;
+    if (action === 'stop' && !confirm(`确认停止 Compose 栈 ${project} 中的全部容器？`)) return;
     setStreamModal({ title: `${project} · ${label}`, output: `$ cd ${dir}\n`, running: true });
     try {
       const res = await fetch(
@@ -234,18 +237,34 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
     }
   };
 
-  const handleSystemdRestart = async (svc: SystemdService) => {
-    if (!confirm(`确认重启系统服务 ${svc.name}？`)) return;
-    setBusyId(`svc-${svc.name}`);
+  const PROTECTED_SYSTEMD = new Set(['ssh', 'sshd', 'atlasnode', 'tailscaled']);
+
+  const handleSystemdAction = async (svc: SystemdService, action: 'start' | 'stop' | 'restart') => {
+    if (action === 'stop' && PROTECTED_SYSTEMD.has(svc.name)) return;
+    const actionLabel = action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启';
+    if (action !== 'start' && !confirm(`确认${actionLabel}系统服务 ${svc.name}？`)) return;
+    setBusyId(`svc-${svc.name}-${action}`);
+    setError('');
     try {
-      await api.systemdAction(snapshot.server.id, svc.name, 'restart');
+      await api.systemdAction(snapshot.server.id, svc.name, action);
       await load();
+      onRefreshSnapshot();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '重启失败');
+      setError(err instanceof Error ? err.message : `${actionLabel}失败`);
     } finally {
       setBusyId(null);
     }
   };
+
+  const filteredSystemd = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return systemdServices.filter(
+      (s) =>
+        !q ||
+        s.name.toLowerCase().includes(q) ||
+        (s.description || '').toLowerCase().includes(q)
+    );
+  }, [systemdServices, query]);
 
   // Group containers by Compose Project
   const grouped = useMemo(() => {
@@ -390,7 +409,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="搜索容器名、镜像、Compose 项目..."
+            placeholder="搜索容器名、镜像、Compose 项目或系统服务..."
             className="w-full bg-[#0f131b] border border-white/[0.08] focus:border-sky-400/50 focus:outline-none rounded-xl pl-9 pr-3 py-2 text-xs text-white placeholder:text-slate-500"
           />
         </div>
@@ -441,6 +460,25 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                   </div>
                   {group.dir && (
                     <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                      {group.items.some((i) => i.state === 'running') ? (
+                        <button
+                          onClick={() => handleComposeAction(group.project, group.dir!, 'stop')}
+                          title="停止整个 Compose 栈 (docker compose stop)"
+                          className="flex items-center gap-1 text-[11px] bg-white/[0.04] hover:bg-rose-500/15 border border-white/[0.08] hover:border-rose-500/30 text-slate-300 hover:text-rose-300 px-2 py-1 rounded-lg cursor-pointer"
+                        >
+                          <Square className="w-3 h-3" />
+                          <span>停止栈</span>
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleComposeAction(group.project, group.dir!, 'up')}
+                          title="启动整个 Compose 栈 (docker compose up -d)"
+                          className="flex items-center gap-1 text-[11px] bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 px-2 py-1 rounded-lg cursor-pointer"
+                        >
+                          <Play className="w-3 h-3" />
+                          <span>启动栈</span>
+                        </button>
+                      )}
                       <button
                         onClick={() => handleOpenComposeEditor(group.project, group.dir!)}
                         title="在线编辑 docker-compose.yml"
@@ -546,42 +584,32 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                             </div>
                           )}
 
-                          <div className="flex items-center gap-1">
-                            {isRunning && onOpenContainerTerminal && (
-                              <button
-                                onClick={() => onOpenContainerTerminal(c.name)}
-                                title="进入容器终端 (docker exec)"
-                                className="p-1.5 rounded-lg bg-white/[0.04] hover:bg-emerald-500/20 text-slate-300 hover:text-emerald-300 cursor-pointer"
-                              >
-                                <Terminal className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                            <button
-                              onClick={() => handleOpenDockerLogs(c)}
-                              title="查看容器日志"
-                              className="p-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.09] text-slate-300 hover:text-white cursor-pointer"
-                            >
-                              <FileText className="w-3.5 h-3.5" />
-                            </button>
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             {isRunning ? (
                               <>
                                 <button
                                   onClick={() => handleDockerAction(c, 'restart')}
                                   disabled={busyId !== null}
                                   title="重启容器"
-                                  className="p-1.5 rounded-lg bg-white/[0.04] hover:bg-sky-500/20 text-slate-300 hover:text-sky-300 cursor-pointer disabled:opacity-40"
+                                  className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-sky-500/20 border border-white/[0.07] text-slate-300 hover:text-sky-300 cursor-pointer disabled:opacity-40"
                                 >
                                   <RotateCw
-                                    className={`w-3.5 h-3.5 ${busyId === `${c.id}-restart` ? 'animate-spin' : ''}`}
+                                    className={`w-3 h-3 ${busyId === `${c.id}-restart` ? 'animate-spin' : ''}`}
                                   />
+                                  <span>重启</span>
                                 </button>
                                 <button
                                   onClick={() => handleDockerAction(c, 'stop')}
                                   disabled={busyId !== null}
                                   title="停止容器"
-                                  className="p-1.5 rounded-lg bg-white/[0.04] hover:bg-rose-500/20 text-slate-300 hover:text-rose-400 cursor-pointer disabled:opacity-40"
+                                  className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-rose-500/20 border border-white/[0.07] hover:border-rose-500/30 text-slate-300 hover:text-rose-300 cursor-pointer disabled:opacity-40"
                                 >
-                                  <Square className="w-3.5 h-3.5" />
+                                  {busyId === `${c.id}-stop` ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <Square className="w-3 h-3" />
+                                  )}
+                                  <span>停止</span>
                                 </button>
                               </>
                             ) : (
@@ -589,9 +617,32 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                                 onClick={() => handleDockerAction(c, 'start')}
                                 disabled={busyId !== null}
                                 title="启动容器"
-                                className="p-1.5 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 cursor-pointer disabled:opacity-40"
+                                className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-medium cursor-pointer disabled:opacity-40"
                               >
-                                <Play className="w-3.5 h-3.5" />
+                                {busyId === `${c.id}-start` ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <Play className="w-3 h-3" />
+                                )}
+                                <span>启动</span>
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleOpenDockerLogs(c)}
+                              title="查看容器日志"
+                              className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.07] text-slate-300 hover:text-white cursor-pointer"
+                            >
+                              <FileText className="w-3 h-3" />
+                              <span>日志</span>
+                            </button>
+                            {isRunning && onOpenContainerTerminal && (
+                              <button
+                                onClick={() => onOpenContainerTerminal(c.name)}
+                                title="进入容器终端 (docker exec)"
+                                className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-emerald-500/20 border border-white/[0.07] text-slate-300 hover:text-emerald-300 cursor-pointer"
+                              >
+                                <Terminal className="w-3 h-3" />
+                                <span>终端</span>
                               </button>
                             )}
                           </div>
@@ -610,52 +661,109 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-white flex items-center gap-2">
           <ServerCog className="w-4 h-4 text-indigo-400" />
-          宿主机 Systemd 关键服务 ({systemdServices.length})
+          宿主机 Systemd 服务 ({filteredSystemd.filter((s) => s.activeState === 'active').length} 运行 / {filteredSystemd.length} 总计)
         </h2>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {systemdServices.map((svc) => (
-            <div
-              key={svc.name}
-              className="bg-[#0f131b] border border-white/[0.07] rounded-xl px-4 py-3 flex items-center justify-between gap-3"
-            >
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`w-2 h-2 rounded-full shrink-0 ${
-                      svc.activeState === 'active' ? 'bg-emerald-400' : 'bg-rose-500'
-                    }`}
-                  />
-                  <span className="text-xs font-semibold font-mono text-white truncate">
-                    {svc.name}
-                  </span>
-                  <span className="text-[10px] font-mono text-slate-500">{svc.subState}</span>
+          {filteredSystemd.map((svc) => {
+            const isActive = svc.activeState === 'active';
+            const isFailed = svc.activeState === 'failed';
+            const isProtected = PROTECTED_SYSTEMD.has(svc.name);
+            return (
+              <div
+                key={svc.name}
+                className="bg-[#0f131b] border border-white/[0.07] rounded-xl px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span
+                      className={`w-2 h-2 rounded-full shrink-0 ${
+                        isActive ? 'bg-emerald-400' : isFailed ? 'bg-rose-500' : 'bg-slate-600'
+                      }`}
+                    />
+                    <span className="text-xs font-semibold font-mono text-white truncate">
+                      {svc.name}
+                    </span>
+                    <span
+                      className={`text-[10px] font-mono px-1.5 py-0.2 rounded border ${
+                        isActive
+                          ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+                          : isFailed
+                            ? 'bg-rose-500/10 border-rose-500/25 text-rose-300'
+                            : 'bg-white/[0.04] border-white/[0.08] text-slate-400'
+                      }`}
+                    >
+                      {svc.subState || svc.activeState}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-400 truncate mt-0.5 pl-4">
+                    {svc.description}
+                  </div>
                 </div>
-                <div className="text-[11px] text-slate-400 truncate mt-0.5 pl-4">
-                  {svc.description}
+                <div className="flex items-center gap-1.5 pl-4 sm:pl-0 shrink-0 flex-wrap">
+                  {isActive ? (
+                    <>
+                      <button
+                        onClick={() => handleSystemdAction(svc, 'restart')}
+                        disabled={busyId !== null}
+                        title="重启服务"
+                        className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-sky-500/20 border border-white/[0.07] text-slate-300 hover:text-sky-300 cursor-pointer disabled:opacity-40"
+                      >
+                        <RotateCw
+                          className={`w-3 h-3 ${busyId === `svc-${svc.name}-restart` ? 'animate-spin' : ''}`}
+                        />
+                        <span>重启</span>
+                      </button>
+                      {!isProtected ? (
+                        <button
+                          onClick={() => handleSystemdAction(svc, 'stop')}
+                          disabled={busyId !== null}
+                          title="停止服务"
+                          className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-rose-500/20 border border-white/[0.07] hover:border-rose-500/30 text-slate-300 hover:text-rose-300 cursor-pointer disabled:opacity-40"
+                        >
+                          {busyId === `svc-${svc.name}-stop` ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Square className="w-3 h-3" />
+                          )}
+                          <span>停止</span>
+                        </button>
+                      ) : (
+                        <span
+                          title="核心连接服务受保护，禁止通过面板停止"
+                          className="text-[10px] font-mono text-slate-600 px-1.5 py-1 rounded bg-white/[0.02]"
+                        >
+                          保护
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => handleSystemdAction(svc, 'start')}
+                      disabled={busyId !== null}
+                      title="启动服务"
+                      className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 font-medium cursor-pointer disabled:opacity-40"
+                    >
+                      {busyId === `svc-${svc.name}-start` ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Play className="w-3 h-3" />
+                      )}
+                      <span>启动</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleOpenSystemdLogs(svc)}
+                    title="查看 journalctl 日志"
+                    className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.07] text-slate-300 hover:text-white cursor-pointer"
+                  >
+                    <FileText className="w-3 h-3" />
+                    <span>日志</span>
+                  </button>
                 </div>
               </div>
-              <div className="flex items-center gap-1 shrink-0">
-                <button
-                  onClick={() => handleOpenSystemdLogs(svc)}
-                  title="查看 journalctl 日志"
-                  className="p-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.09] text-slate-300 hover:text-white cursor-pointer"
-                >
-                  <FileText className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => handleSystemdRestart(svc)}
-                  disabled={busyId !== null}
-                  title="重启服务"
-                  className="p-1.5 rounded-lg bg-white/[0.04] hover:bg-sky-500/20 text-slate-300 hover:text-sky-300 cursor-pointer"
-                >
-                  <RotateCw
-                    className={`w-3.5 h-3.5 ${busyId === `svc-${svc.name}` ? 'animate-spin' : ''}`}
-                  />
-                </button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 

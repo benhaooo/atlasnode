@@ -970,13 +970,57 @@ if docker_ok:
                 stats_map[p[0]] = {'cpu': p[1], 'memUsage': p[2], 'memPerc': p[3], 'netIO': p[4]}
 
 svcs = []
-skip = ('systemd-', 'dbus', 'getty', 'serial-getty', 'user@', 'polkit', 'udisks', 'ModemManager', 'networkd-', 'unattended-', 'multipathd', 'irqbalance', 'packagekit', 'fwupd', 'accounts-', 'avahi-', 'acpid', 'atd', 'cloud-init', 'chrony', 'auditd', 'rsyslog', 'rpcbind')
+seen = set()
+skip = ('systemd-', 'dbus', 'getty', 'serial-getty', 'user@', 'polkit', 'udisks', 'ModemManager', 'networkd-', 'unattended-', 'multipathd', 'irqbalance', 'packagekit', 'fwupd', 'accounts-', 'avahi-', 'acpid', 'atd', 'cloud-init', 'chrony', 'auditd', 'rsyslog', 'rpcbind', 'snapd', 'console-', 'plymouth', 'networking', 'ufw', 'apparmor', 'e2scrub', 'fstrim', 'logrotate', 'man-db', 'apt-', 'dpkg-', 'motd-', 'ua-', 'ubuntu-', 'sysstat', 'setvtrgb', 'kmod', 'keyboard-', 'blk-availability', 'lvm2-', 'dm-', 'multipath', 'finalrd', 'grub-', 'rc-local', 'ondemand', 'irqbalance', 'qemu-guest-agent')
 for line in run(['systemctl', 'list-units', '--type=service', '--state=running,failed', '--no-pager', '--no-legend', '--plain']).splitlines():
     p = line.split(None, 4)
     if len(p) < 5: continue
     name, _, active, sub, desc = p
-    if any(name.startswith(s) for s in skip): continue
-    svcs.append({'name': name.replace('.service', ''), 'description': desc, 'activeState': active, 'subState': sub})
+    if any(name.startswith(s) for s in skip) or '@' in name: continue
+    short = name.replace('.service', '')
+    seen.add(short)
+    svcs.append({'name': short, 'description': desc, 'activeState': active, 'subState': sub})
+
+# Also include stopped custom/enabled services so users can start them back up
+import os
+cand_units = []
+try:
+    for fn in sorted(os.listdir('/etc/systemd/system')):
+        if not fn.endswith('.service') or '@' in fn: continue
+        if any(fn.startswith(s) for s in skip): continue
+        short = fn[:-8]
+        if short not in seen:
+            cand_units.append(short)
+except Exception:
+    pass
+for line in run(['systemctl', 'list-unit-files', '--type=service', '--state=enabled', '--no-pager', '--no-legend']).splitlines():
+    p = line.split()
+    if not p: continue
+    fn = p[0]
+    if not fn.endswith('.service') or '@' in fn: continue
+    if any(fn.startswith(s) for s in skip): continue
+    short = fn[:-8]
+    if short not in seen and short not in cand_units:
+        cand_units.append(short)
+
+for short in cand_units[:30]:
+    info = run(['systemctl', 'show', short + '.service', '--property=ActiveState,SubState,Description,Type,LoadState', '--no-pager'])
+    kv = {}
+    for ln in info.splitlines():
+        if '=' in ln:
+            k, v = ln.split('=', 1)
+            kv[k] = v
+    if kv.get('LoadState') != 'loaded': continue
+    if kv.get('Type') == 'oneshot': continue
+    act = kv.get('ActiveState', 'inactive')
+    if act == 'active': continue
+    seen.add(short)
+    svcs.append({
+        'name': short,
+        'description': kv.get('Description', '') or short,
+        'activeState': act,
+        'subState': kv.get('SubState', 'dead'),
+    })
 
 print(json.dumps({'dockerAvailable': docker_ok, 'containersRaw': containers_raw, 'inspectMap': inspect_map, 'statsMap': stats_map, 'systemdServices': svcs}))
 `

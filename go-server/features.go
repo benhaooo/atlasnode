@@ -551,6 +551,8 @@ func spawnComposeAction(srv ServerConfig, composeDir, action string) (*StreamPro
 		cmd = "docker compose pull && docker compose up -d"
 	case "restart":
 		cmd = "docker compose restart"
+	case "stop":
+		cmd = "docker compose stop"
 	}
 	script := fmt.Sprintf("set -e\ncd \"$1\"\necho \"[AtlasNode] $PWD -> %s\"\n%s 2>&1\n", cmd, cmd)
 	return spawnScriptStream(srv, script, ExecOpts{Args: []string{composeDir}, Sudo: true})

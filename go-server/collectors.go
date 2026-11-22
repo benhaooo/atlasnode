@@ -337,7 +337,7 @@ def get_docker():
 def get_ports():
     out = run(['ss', '-tulnp'], timeout=5)
     ports = []
-    seen = set()
+    seen = {}
     for line in out.splitlines()[1:]:
         parts = line.split()
         if len(parts) < 5:
@@ -364,10 +364,6 @@ def get_ports():
         if m:
             proc = m.group(1)
             pid = int(m.group(2))
-        key = (proto, addr, port, proc)
-        if key in seen:
-            continue
-        seen.add(key)
         if addr in ('0.0.0.0', '*', '::'):
             scope = 'public'
         elif addr.startswith('100.'):
@@ -376,14 +372,24 @@ def get_ports():
             scope = 'local'
         else:
             scope = 'private'
-        ports.append({
+        # Merge IPv4 (0.0.0.0) & IPv6 (:: / *) dual-stack wildcard listeners for the same port
+        dedupe_addr = '*' if scope == 'public' else addr
+        key = (proto, scope, dedupe_addr, port, proc or 'unknown')
+        if key in seen:
+            existing = seen[key]
+            if addr not in existing['address'].split(' / '):
+                existing['address'] = existing['address'] + ' / ' + addr
+            continue
+        item = {
             'proto': proto,
             'address': addr,
             'port': port,
             'scope': scope,
             'process': proc or 'unknown',
             'pid': pid,
-        })
+        }
+        seen[key] = item
+        ports.append(item)
     return ports
 
 def get_firewall_summary():
@@ -1324,7 +1330,7 @@ if shutil.which('docker'):
             docker_ports[int(m.group(1))] = name
 
 ports = []
-seen = set()
+seen = {}
 for line in run(['ss', '-tulnp']).splitlines()[1:]:
     parts = line.split()
     if len(parts) < 5: continue
@@ -1342,9 +1348,6 @@ for line in run(['ss', '-tulnp']).splitlines()[1:]:
     m = re.search(r'"([^"]+)",pid=(\d+)', rest)
     if m:
         proc, pid = m.group(1), int(m.group(2))
-    key = (proto, addr, port, proc)
-    if key in seen: continue
-    seen.add(key)
     if addr in ('0.0.0.0', '*', '::'):
         scope = 'public'
     elif addr.startswith('100.'):
@@ -1353,7 +1356,14 @@ for line in run(['ss', '-tulnp']).splitlines()[1:]:
         scope = 'local'
     else:
         scope = 'private'
-    ports.append({
+    dedupe_addr = '*' if scope == 'public' else addr
+    key = (proto, scope, dedupe_addr, port, proc)
+    if key in seen:
+        existing = seen[key]
+        if addr not in existing['address'].split(' / '):
+            existing['address'] = existing['address'] + ' / ' + addr
+        continue
+    item = {
         'proto': proto,
         'address': addr,
         'port': port,
@@ -1361,7 +1371,9 @@ for line in run(['ss', '-tulnp']).splitlines()[1:]:
         'process': proc,
         'pid': pid,
         'dockerContainer': docker_ports.get(port, ''),
-    })
+    }
+    seen[key] = item
+    ports.append(item)
 
 raw_ipt = ''
 nft_handles = ''

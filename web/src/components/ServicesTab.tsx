@@ -51,11 +51,80 @@ interface ComposeStackGroup {
   hasOnlyCleanExited: boolean;
 }
 
+interface HostSuiteGroup {
+  name: string;
+  items: SystemdService[];
+  runningCount: number;
+  failedCount: number;
+  description: string;
+  allProtected: boolean;
+}
+
 type DeleteTarget =
   | { kind: 'stack'; project: string; dir?: string; containers: DockerContainer[] }
   | { kind: 'container'; container: DockerContainer };
 
 const PROTECTED_SYSTEMD = new Set(['ssh', 'sshd', 'atlasnode', 'tailscaled']);
+
+const INFRA_SYSTEMD = new Set([
+  'ssh', 'sshd', 'docker', 'containerd', 'tailscaled', 'cron', 'crond',
+  'fail2ban', 'ufw', 'nftables', 'firewalld', 'iptables', 'netfilter-persistent',
+  'chronyd', 'ntp', 'ntpd', 'rsyslog', 'syslog-ng', 'auditd', 'haveged',
+  'rngd', 'smartd', 'lm-sensors', 'monit', 'open-vm-tools', 'vmtoolsd',
+]);
+
+function groupHostServices(services: SystemdService[]): {
+  suites: HostSuiteGroup[];
+  singles: SystemdService[];
+  infra: SystemdService[];
+} {
+  const infra: SystemdService[] = [];
+  const apps: SystemdService[] = [];
+  for (const s of services) {
+    if (INFRA_SYSTEMD.has(s.name.toLowerCase())) {
+      infra.push(s);
+    } else {
+      apps.push(s);
+    }
+  }
+
+  // Group host apps sharing a 2-segment or 1-segment hyphen prefix (e.g. cube-sandbox-*, 1panel-*)
+  const assigned = new Set<string>();
+  const suitesMap = new Map<string, SystemdService[]>();
+
+  const tryGroupBySegments = (segCount: number) => {
+    const buckets = new Map<string, SystemdService[]>();
+    for (const s of apps) {
+      if (assigned.has(s.name)) continue;
+      const parts = s.name.split('-');
+      if (parts.length <= segCount) continue;
+      const prefix = parts.slice(0, segCount).join('-');
+      if (!buckets.has(prefix)) buckets.set(prefix, []);
+      buckets.get(prefix)!.push(s);
+    }
+    for (const [prefix, items] of buckets.entries()) {
+      if (items.length >= 2) {
+        suitesMap.set(prefix, items);
+        for (const it of items) assigned.add(it.name);
+      }
+    }
+  };
+
+  tryGroupBySegments(2);
+  tryGroupBySegments(1);
+
+  const suites: HostSuiteGroup[] = Array.from(suitesMap.entries()).map(([name, items]) => ({
+    name,
+    items,
+    runningCount: items.filter((i) => i.activeState === 'active').length,
+    failedCount: items.filter((i) => i.activeState === 'failed').length,
+    description: items[0]?.description || '',
+    allProtected: items.every((i) => PROTECTED_SYSTEMD.has(i.name)),
+  }));
+
+  const singles = apps.filter((s) => !assigned.has(s.name));
+  return { suites, singles, infra };
+}
 
 function parseMemToBytes(memUsage?: string): number {
   if (!memUsage) return 0;
@@ -111,7 +180,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'running' | 'stopped'>('all');
   const [expandedStacks, setExpandedStacks] = useState<Record<string, boolean>>({});
-  const [systemdExpanded, setSystemdExpanded] = useState(!snapshot.dockerAvailable);
+  const [infraExpanded, setInfraExpanded] = useState(false);
 
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -146,9 +215,6 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
       setDockerAvailable(res.dockerAvailable);
       setContainers(res.containers);
       setSystemdServices(res.systemdServices);
-      if (!res.dockerAvailable) {
-        setSystemdExpanded(true);
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载服务列表失败');
     } finally {
@@ -171,7 +237,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
   useEffect(() => {
     setProxyRoutes([]);
     setExpandedStacks({});
-    setSystemdExpanded(!snapshot.dockerAvailable);
+    setInfraExpanded(false);
     load();
     loadProxies();
   }, [snapshot.server.id]);
@@ -376,7 +442,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
   const handleSystemdAction = async (svc: SystemdService, action: 'start' | 'stop' | 'restart') => {
     if (action === 'stop' && PROTECTED_SYSTEMD.has(svc.name)) return;
     const actionLabel = action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启';
-    if (action !== 'start' && !confirm(`确认${actionLabel}系统服务 ${svc.name}？`)) return;
+    if (action !== 'start' && !confirm(`确认${actionLabel}服务 ${svc.name}？`)) return;
     setBusyId(`svc-${svc.name}-${action}`);
     setError('');
     try {
@@ -385,6 +451,28 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
       onRefreshSnapshot();
     } catch (err) {
       setError(err instanceof Error ? err.message : `${actionLabel}失败`);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleHostSuiteAction = async (suite: HostSuiteGroup, action: 'start' | 'stop' | 'restart') => {
+    const targets = suite.items.filter((s) => !(action === 'stop' && PROTECTED_SYSTEMD.has(s.name)));
+    if (targets.length === 0) return;
+    const actionLabel = action === 'start' ? '启动' : action === 'stop' ? '停止' : '重启';
+    if (action !== 'start' && !confirm(`确认${actionLabel}服务套件「${suite.name}」（共 ${targets.length} 个子服务）？`)) {
+      return;
+    }
+    setBusyId(`suite-${suite.name}-${action}`);
+    setError('');
+    try {
+      for (const s of targets) {
+        await api.systemdAction(snapshot.server.id, s.name, action);
+      }
+      await load();
+      onRefreshSnapshot();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `${actionLabel}套件失败`);
     } finally {
       setBusyId(null);
     }
@@ -485,9 +573,48 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
     return { stacks: builtStacks, standalones: filteredStandalones };
   }, [containers, query, statusFilter]);
 
-  const filteredSystemd = useMemo(() => {
+  const { hostSuites, hostSingles, infraSystemd } = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return systemdServices.filter((s) => {
+    const { suites, singles, infra } = groupHostServices(systemdServices);
+
+    const filteredSuites = suites
+      .filter((st) => {
+        if (
+          q &&
+          !st.name.toLowerCase().includes(q) &&
+          !st.description.toLowerCase().includes(q) &&
+          !st.items.some((i) => i.name.toLowerCase().includes(q))
+        ) {
+          return false;
+        }
+        if (statusFilter === 'running' && st.runningCount === 0) return false;
+        if (statusFilter === 'stopped' && st.runningCount > 0) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const aRun = a.runningCount > 0 ? 1 : 0;
+        const bRun = b.runningCount > 0 ? 1 : 0;
+        if (aRun !== bRun) return bRun - aRun;
+        return b.items.length - a.items.length;
+      });
+
+    const filteredSingles = singles
+      .filter((s) => {
+        if (q && !s.name.toLowerCase().includes(q) && !(s.description || '').toLowerCase().includes(q)) {
+          return false;
+        }
+        if (statusFilter === 'running' && s.activeState !== 'active') return false;
+        if (statusFilter === 'stopped' && s.activeState === 'active') return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const aRun = a.activeState === 'active' ? 1 : 0;
+        const bRun = b.activeState === 'active' ? 1 : 0;
+        if (aRun !== bRun) return bRun - aRun;
+        return a.name.localeCompare(b.name);
+      });
+
+    const filteredInfra = infra.filter((s) => {
       if (q && !s.name.toLowerCase().includes(q) && !(s.description || '').toLowerCase().includes(q)) {
         return false;
       }
@@ -495,12 +622,31 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
       if (statusFilter === 'stopped' && s.activeState === 'active') return false;
       return true;
     });
+
+    return { hostSuites: filteredSuites, hostSingles: filteredSingles, infraSystemd: filteredInfra };
   }, [systemdServices, query, statusFilter]);
 
-  const showSystemdList = systemdExpanded || query.trim().length > 0;
+  const allQuickLinks = useMemo(
+    () => [...snapshot.server.quickLinks, ...snapshot.detectedLinks],
+    [snapshot.server.quickLinks, snapshot.detectedLinks]
+  );
+
+  const findMatchedLinks = (serviceName: string) => {
+    const key = serviceName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (key.length < 3) return [];
+    return allQuickLinks.filter((l) => {
+      const hay = `${l.id} ${l.name} ${l.description || ''}`.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return hay.includes(key);
+    });
+  };
+
+  const showInfraList = infraExpanded || query.trim().length > 0;
   const totalRunningServices =
-    stacks.filter((s) => s.runningCount > 0).length + standalones.filter((c) => c.state === 'running').length;
-  const totalServices = stacks.length + standalones.length;
+    stacks.filter((s) => s.runningCount > 0).length +
+    hostSuites.filter((s) => s.runningCount > 0).length +
+    standalones.filter((c) => c.state === 'running').length +
+    hostSingles.filter((s) => s.activeState === 'active').length;
+  const totalServices = stacks.length + hostSuites.length + standalones.length + hostSingles.length;
 
   return (
     <div className="space-y-5">
@@ -628,28 +774,29 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
         </div>
       )}
 
-      {/* Primary View: Project-Centric Docker Services */}
-      {dockerAvailable && (
-        <div className="space-y-5">
-          {/* Section 1: Compose Project Stacks (Collapsed by Default!) */}
-          <section className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-                <Layers className="w-4 h-4 text-sky-400" />
-                <span>部署服务 ({totalRunningServices}/{totalServices} 运行中)</span>
-              </h2>
-              <span className="text-[11px] font-mono text-slate-500">
-                {stacks.length} 个项目栈 · {standalones.length} 个独立容器 · 共 {containers.length} 个容器
-              </span>
-            </div>
+      {/* Primary View: All Deployed Services (Docker Stacks + Host App Suites + Single Services) */}
+      <div className="space-y-5">
+        {/* Section 1: Multi-Component Services (Compose Stacks + Host App Suites, Collapsed by Default) */}
+        <section className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+              <Layers className="w-4 h-4 text-sky-400" />
+              <span>部署服务 ({totalRunningServices}/{totalServices} 运行中)</span>
+            </h2>
+            <span className="text-[11px] font-mono text-slate-500">
+              {stacks.length + hostSuites.length} 个多组件项目 · {standalones.length + hostSingles.length} 个单体服务
+            </span>
+          </div>
 
-            {stacks.length === 0 && standalones.length === 0 ? (
-              <div className="bg-[#0f131b] border border-white/[0.06] rounded-2xl p-8 text-center text-xs text-slate-500">
-                {loading ? '正在读取部署服务与资源统计...' : '没有匹配的 Docker 服务'}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {stacks.map((stack) => {
+          {totalServices === 0 ? (
+            <div className="bg-[#0f131b] border border-white/[0.06] rounded-2xl p-8 text-center text-xs text-slate-500">
+              {loading ? '正在读取部署服务与资源统计...' : '没有匹配的服务'}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {/* Docker Compose Project Stacks */}
+              {dockerAvailable &&
+                stacks.map((stack) => {
                   const isRunning = stack.runningCount > 0;
                   const isAllRunning = stack.runningCount === stack.items.length;
                   const isExpanded = Boolean(expandedStacks[stack.project]) || (query.trim().length > 0 && !stack.project.toLowerCase().includes(query.trim().toLowerCase()));
@@ -691,6 +838,9 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                                   {stack.project}
                                 </span>
                               </button>
+                              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-sky-500/10 border border-sky-400/20 text-sky-300 shrink-0">
+                                Compose
+                              </span>
                               <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border shrink-0 ${statusTone.pill}`}>
                                 {statusTone.label}
                               </span>
@@ -967,22 +1117,254 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                     </div>
                   );
                 })}
-              </div>
-            )}
-          </section>
 
-          {/* Section 2: Standalone Single-Container Services */}
-          {standalones.length > 0 && (
-            <section className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                  <Box className="w-3.5 h-3.5 text-sky-400" />
-                  <span>独立单体服务 ({standalones.filter((c) => c.state === 'running').length}/{standalones.length} 运行)</span>
-                </h3>
-              </div>
+              {/* Host App Suites (e.g. 1panel, cube-sandbox — grouped Systemd suites, collapsed by default) */}
+              {hostSuites.map((suite) => {
+                const suiteKey = `host:${suite.name}`;
+                const isRunning = suite.runningCount > 0;
+                const isExpanded =
+                  Boolean(expandedStacks[suiteKey]) ||
+                  (query.trim().length > 0 && !suite.name.toLowerCase().includes(query.trim().toLowerCase()));
+                const matchedLinks = findMatchedLinks(suite.name);
+                const statusTone =
+                  suite.failedCount > 0
+                    ? { dot: 'bg-rose-500', pill: 'bg-rose-500/15 border-rose-500/30 text-rose-300', label: `异常 (${suite.failedCount})` }
+                    : isRunning
+                      ? {
+                          dot: 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]',
+                          pill: 'bg-emerald-500/12 border-emerald-500/25 text-emerald-300',
+                          label: `运行中 · ${suite.runningCount}/${suite.items.length}`,
+                        }
+                      : { dot: 'bg-slate-600', pill: 'bg-white/[0.04] border-white/[0.08] text-slate-400', label: '已停止' };
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                {standalones.map((c) => {
+                return (
+                  <div
+                    key={suiteKey}
+                    className={`bg-[#0f131b] border rounded-2xl overflow-hidden transition-colors ${
+                      isExpanded ? 'border-indigo-400/35' : 'border-white/[0.07] hover:border-white/[0.14]'
+                    }`}
+                  >
+                    <div className="p-4 sm:p-5 space-y-3">
+                      <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1 space-y-2">
+                          <div className="flex items-center gap-2.5 flex-wrap">
+                            <button
+                              onClick={() => toggleStack(suiteKey)}
+                              className="flex items-center gap-2 text-left group cursor-pointer min-w-0"
+                            >
+                              <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${statusTone.dot}`} />
+                              <span className="text-sm sm:text-base font-semibold text-white group-hover:text-indigo-300 transition-colors truncate">
+                                {suite.name}
+                              </span>
+                            </button>
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-indigo-500/12 border border-indigo-400/25 text-indigo-300 shrink-0">
+                              宿主机套件
+                            </span>
+                            <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border shrink-0 ${statusTone.pill}`}>
+                              {statusTone.label}
+                            </span>
+                          </div>
+
+                          {(matchedLinks.length > 0 || suite.description) && (
+                            <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                              {matchedLinks.map((lk) => (
+                                <a
+                                  key={lk.id}
+                                  href={lk.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-1 font-mono bg-sky-500/12 hover:bg-sky-500/22 border border-sky-400/25 text-sky-300 px-2 py-0.5 rounded-md transition-colors"
+                                >
+                                  <span>{lk.name}</span>
+                                  <ExternalLink className="w-2.5 h-2.5" />
+                                </a>
+                              ))}
+                              {suite.description && (
+                                <span className="text-slate-400 truncate max-w-xl">{suite.description}</span>
+                              )}
+                            </div>
+                          )}
+
+                          <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                            <button
+                              onClick={() => toggleStack(suiteKey)}
+                              className="inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-indigo-300 transition-colors cursor-pointer"
+                            >
+                              {isExpanded ? (
+                                <ChevronDown className="w-3.5 h-3.5 text-indigo-400" />
+                              ) : (
+                                <ChevronRight className="w-3.5 h-3.5" />
+                              )}
+                              <span>{isExpanded ? '收起子服务' : `展开 ${suite.items.length} 个子服务`}</span>
+                            </button>
+                            {!isExpanded && (
+                              <div className="flex flex-wrap items-center gap-1 text-[10px] font-mono text-slate-500">
+                                {suite.items.slice(0, 6).map((s) => (
+                                  <span
+                                    key={s.name}
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-white/[0.03] text-slate-400"
+                                  >
+                                    <span
+                                      className={`w-1.5 h-1.5 rounded-full ${
+                                        s.activeState === 'active'
+                                          ? 'bg-emerald-400/80'
+                                          : s.activeState === 'failed'
+                                            ? 'bg-rose-500'
+                                            : 'bg-slate-600'
+                                      }`}
+                                    />
+                                    {s.name.replace(new RegExp(`^${suite.name}-`), '')}
+                                  </span>
+                                ))}
+                                {suite.items.length > 6 && <span>+{suite.items.length - 6}</span>}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 flex-wrap lg:justify-end shrink-0">
+                          {isRunning ? (
+                            <>
+                              <button
+                                onClick={() => handleHostSuiteAction(suite, 'restart')}
+                                disabled={busyId !== null}
+                                className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-xl bg-white/[0.04] hover:bg-sky-500/20 border border-white/[0.08] text-slate-200 hover:text-sky-300 transition-colors cursor-pointer disabled:opacity-40"
+                              >
+                                <RotateCw className={`w-3.5 h-3.5 ${busyId === `suite-${suite.name}-restart` ? 'animate-spin' : ''}`} />
+                                <span>重启</span>
+                              </button>
+                              {!suite.allProtected && (
+                                <button
+                                  onClick={() => handleHostSuiteAction(suite, 'stop')}
+                                  disabled={busyId !== null}
+                                  className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-xl bg-white/[0.04] hover:bg-rose-500/18 border border-white/[0.08] hover:border-rose-500/30 text-slate-200 hover:text-rose-300 transition-colors cursor-pointer disabled:opacity-40"
+                                >
+                                  {busyId === `suite-${suite.name}-stop` ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <Square className="w-3.5 h-3.5" />
+                                  )}
+                                  <span>停止</span>
+                                </button>
+                              )}
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => handleHostSuiteAction(suite, 'start')}
+                              disabled={busyId !== null}
+                              className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded-xl bg-emerald-500/18 hover:bg-emerald-500/28 border border-emerald-500/35 text-emerald-300 font-semibold transition-colors cursor-pointer disabled:opacity-40"
+                            >
+                              {busyId === `suite-${suite.name}-start` ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Play className="w-3.5 h-3.5" />
+                              )}
+                              <span>启动</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="border-t border-white/[0.06] bg-[#0a0d14] divide-y divide-white/[0.04]">
+                        {suite.items.map((svc) => {
+                          const isActive = svc.activeState === 'active';
+                          const isFailed = svc.activeState === 'failed';
+                          const isProtected = PROTECTED_SYSTEMD.has(svc.name);
+                          return (
+                            <div
+                              key={svc.name}
+                              className="px-4 sm:px-5 py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 hover:bg-white/[0.015]"
+                            >
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span
+                                    className={`w-2 h-2 rounded-full shrink-0 ${
+                                      isActive ? 'bg-emerald-400' : isFailed ? 'bg-rose-500' : 'bg-slate-600'
+                                    }`}
+                                  />
+                                  <span className="text-xs font-semibold font-mono text-slate-100 truncate">
+                                    {svc.name}
+                                  </span>
+                                  <span className="text-[10px] font-mono text-slate-500">
+                                    {svc.subState || svc.activeState}
+                                  </span>
+                                </div>
+                                <div className="text-[11px] text-slate-500 truncate pl-4 mt-0.5">
+                                  {svc.description}
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1.5 pl-4 sm:pl-0 shrink-0 flex-wrap">
+                                {isActive ? (
+                                  <>
+                                    <button
+                                      onClick={() => handleSystemdAction(svc, 'restart')}
+                                      disabled={busyId !== null}
+                                      className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-sky-500/20 border border-white/[0.07] text-slate-300 hover:text-sky-300 cursor-pointer disabled:opacity-40"
+                                    >
+                                      <RotateCw className={`w-3 h-3 ${busyId === `svc-${svc.name}-restart` ? 'animate-spin' : ''}`} />
+                                      <span>重启</span>
+                                    </button>
+                                    {!isProtected && (
+                                      <button
+                                        onClick={() => handleSystemdAction(svc, 'stop')}
+                                        disabled={busyId !== null}
+                                        className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-rose-500/20 border border-white/[0.07] text-slate-300 hover:text-rose-300 cursor-pointer disabled:opacity-40"
+                                      >
+                                        {busyId === `svc-${svc.name}-stop` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Square className="w-3 h-3" />}
+                                        <span>停止</span>
+                                      </button>
+                                    )}
+                                  </>
+                                ) : (
+                                  <button
+                                    onClick={() => handleSystemdAction(svc, 'start')}
+                                    disabled={busyId !== null}
+                                    className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-300 cursor-pointer disabled:opacity-40"
+                                  >
+                                    {busyId === `svc-${svc.name}-start` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                                    <span>启动</span>
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => handleOpenSystemdLogs(svc)}
+                                  className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.07] text-slate-300 hover:text-white cursor-pointer"
+                                >
+                                  <FileText className="w-3 h-3" />
+                                  <span>日志</span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        {/* Section 2: Standalone Services (Single Docker Containers + Single Host Apps) */}
+        {(standalones.length > 0 || hostSingles.length > 0) && (
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                <Box className="w-3.5 h-3.5 text-sky-400" />
+                <span>
+                  单体服务 (
+                  {standalones.filter((c) => c.state === 'running').length +
+                    hostSingles.filter((s) => s.activeState === 'active').length}
+                  /{standalones.length + hostSingles.length} 运行)
+                </span>
+              </h3>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              {dockerAvailable &&
+                standalones.map((c) => {
                   const isRunning = c.state === 'running';
                   return (
                     <div
@@ -1004,6 +1386,9 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                               />
                               <span className="text-sm font-semibold text-white font-mono truncate">
                                 {c.name}
+                              </span>
+                              <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-sky-500/10 border border-sky-400/20 text-sky-300">
+                                Docker
                               </span>
                               <span
                                 className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full border ${
@@ -1115,38 +1500,147 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                     </div>
                   );
                 })}
-              </div>
-            </section>
-          )}
-        </div>
-      )}
 
-      {/* Systemd Host Services (Collapsed by default on Docker nodes, expanded on non-Docker nodes) */}
-      <section className="bg-[#0f131b] border border-white/[0.06] rounded-2xl overflow-hidden">
-        <button
-          onClick={() => setSystemdExpanded((v) => !v)}
-          className="w-full px-4 sm:px-5 py-3.5 flex flex-wrap items-center justify-between gap-2 text-left hover:bg-white/[0.02] transition-colors cursor-pointer"
-        >
-          <div className="flex items-center gap-2 text-xs font-semibold text-slate-200">
-            {showSystemdList ? (
-              <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
-            ) : (
-              <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
-            )}
-            <ServerCog className="w-4 h-4 text-indigo-400 shrink-0" />
-            <span>宿主机 Systemd 后台服务</span>
-            <span className="text-[10px] font-mono font-normal px-2 py-0.5 rounded-full bg-white/[0.05] text-slate-400">
-              {filteredSystemd.filter((s) => s.activeState === 'active').length} 运行 / {filteredSystemd.length} 总计
+              {/* Single Host Applications (e.g. orvia, cloud-agent, caddy, x-ui, sing-box, atlasnode) */}
+              {hostSingles.map((svc) => {
+                const isActive = svc.activeState === 'active';
+                const isFailed = svc.activeState === 'failed';
+                const isProtected = PROTECTED_SYSTEMD.has(svc.name);
+                const matchedLinks = findMatchedLinks(svc.name);
+                return (
+                  <div
+                    key={`host-single-${svc.name}`}
+                    className="bg-[#0f131b] border border-white/[0.07] hover:border-white/[0.14] rounded-2xl p-4 space-y-3 transition-colors flex flex-col justify-between"
+                  >
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span
+                          className={`w-2 h-2 rounded-full shrink-0 ${
+                            isActive
+                              ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.45)]'
+                              : isFailed
+                                ? 'bg-rose-500'
+                                : 'bg-slate-600'
+                          }`}
+                        />
+                        <span className="text-sm font-semibold text-white font-mono truncate">
+                          {svc.name}
+                        </span>
+                        <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-indigo-500/12 border border-indigo-400/25 text-indigo-300">
+                          宿主机
+                        </span>
+                        <span
+                          className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full border ${
+                            isActive
+                              ? 'bg-emerald-500/12 border-emerald-500/25 text-emerald-300'
+                              : isFailed
+                                ? 'bg-rose-500/12 border-rose-500/25 text-rose-300'
+                                : 'bg-white/[0.04] border-white/[0.08] text-slate-400'
+                          }`}
+                        >
+                          {isActive ? '运行中' : isFailed ? '异常' : '已停止'}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-400 truncate pl-4">{svc.description}</div>
+                      {matchedLinks.length > 0 && (
+                        <div className="flex flex-wrap gap-1.5 pl-4">
+                          {matchedLinks.map((lk) => (
+                            <a
+                              key={lk.id}
+                              href={lk.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 text-[11px] font-mono bg-sky-500/12 hover:bg-sky-500/22 border border-sky-400/25 text-sky-300 px-2 py-0.5 rounded-md"
+                            >
+                              <span>{lk.name}</span>
+                              <ExternalLink className="w-2.5 h-2.5" />
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 pt-2.5 border-t border-white/[0.05] flex-wrap">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {isActive ? (
+                          <>
+                            <button
+                              onClick={() => handleSystemdAction(svc, 'restart')}
+                              disabled={busyId !== null}
+                              className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg bg-white/[0.04] hover:bg-sky-500/20 border border-white/[0.07] text-slate-200 hover:text-sky-300 cursor-pointer disabled:opacity-40"
+                            >
+                              <RotateCw className={`w-3 h-3 ${busyId === `svc-${svc.name}-restart` ? 'animate-spin' : ''}`} />
+                              <span>重启</span>
+                            </button>
+                            {!isProtected ? (
+                              <button
+                                onClick={() => handleSystemdAction(svc, 'stop')}
+                                disabled={busyId !== null}
+                                className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg bg-white/[0.04] hover:bg-rose-500/20 border border-white/[0.07] text-slate-200 hover:text-rose-300 cursor-pointer disabled:opacity-40"
+                              >
+                                {busyId === `svc-${svc.name}-stop` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Square className="w-3 h-3" />}
+                                <span>停止</span>
+                              </button>
+                            ) : (
+                              <span
+                                title="核心连接服务受保护，禁止通过面板停止"
+                                className="text-[10px] font-mono text-slate-500 px-2 py-1 rounded-lg bg-white/[0.03]"
+                              >
+                                受保护
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <button
+                            onClick={() => handleSystemdAction(svc, 'start')}
+                            disabled={busyId !== null}
+                            className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg bg-emerald-500/18 hover:bg-emerald-500/28 border border-emerald-500/35 text-emerald-300 font-semibold cursor-pointer disabled:opacity-40"
+                          >
+                            {busyId === `svc-${svc.name}-start` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                            <span>启动</span>
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleOpenSystemdLogs(svc)}
+                          className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.07] text-slate-300 hover:text-white cursor-pointer"
+                        >
+                          <FileText className="w-3 h-3" />
+                          <span>日志</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+      </div>
+
+      {/* Low-Weight Collapsible Infrastructure Systemd Services (ssh, docker, containerd, cron, tailscaled...) */}
+      {infraSystemd.length > 0 && (
+        <section className="bg-[#0f131b] border border-white/[0.06] rounded-2xl overflow-hidden">
+          <button
+            onClick={() => setInfraExpanded((v) => !v)}
+            className="w-full px-4 sm:px-5 py-3 flex flex-wrap items-center justify-between gap-2 text-left hover:bg-white/[0.02] transition-colors cursor-pointer"
+          >
+            <div className="flex items-center gap-2 text-xs font-medium text-slate-400">
+              {showInfraList ? (
+                <ChevronDown className="w-4 h-4 text-slate-500 shrink-0" />
+              ) : (
+                <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />
+              )}
+              <ServerCog className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+              <span>系统基础底座 ({infraSystemd.filter((s) => s.activeState === 'active').length}/{infraSystemd.length} 运行)</span>
+            </div>
+            <span className="text-[11px] text-slate-500">
+              {showInfraList ? '收起' : 'ssh · docker · containerd · tailscaled · cron 等底层守护进程，平时无需干预'}
             </span>
-          </div>
-          <span className="text-[11px] text-slate-500">
-            {showSystemdList ? '收起' : '非 Docker 的常驻服务（如代理 / 反代），按需展开'}
-          </span>
-        </button>
+          </button>
 
-        {showSystemdList && (
-          <div className="p-4 sm:p-5 pt-2 border-t border-white/[0.05] grid grid-cols-1 md:grid-cols-2 gap-3">
-            {filteredSystemd.map((svc) => {
+          {showInfraList && (
+            <div className="p-4 sm:p-5 pt-2 border-t border-white/[0.05] grid grid-cols-1 md:grid-cols-2 gap-3">
+              {infraSystemd.map((svc) => {
               const isActive = svc.activeState === 'active';
               const isFailed = svc.activeState === 'failed';
               const isProtected = PROTECTED_SYSTEMD.has(svc.name);
@@ -1231,12 +1725,13 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                 </div>
               );
             })}
-            {filteredSystemd.length === 0 && (
-              <div className="col-span-full text-center py-4 text-xs text-slate-500">没有匹配的 Systemd 服务</div>
+            {infraSystemd.length === 0 && (
+              <div className="col-span-full text-center py-4 text-xs text-slate-500">没有匹配的系统基础服务</div>
             )}
           </div>
         )}
       </section>
+      )}
 
       {/* Safe Delete Confirmation Modal */}
       {deleteTarget && (

@@ -190,24 +190,72 @@ import glob, json, os, shutil, subprocess
 def run(cmd, timeout=12):
     try:
         return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=timeout).stdout
+    except subprocess.TimeoutExpired as e:
+        out = e.stdout
+        if isinstance(out, bytes):
+            return out.decode('utf-8', 'replace')
+        return out or ''
     except Exception:
         return ''
 
-du_out = run(['du', '-x', '-B1', '--max-depth=2', '/'], timeout=15)
-top_dirs = []
-skip = {'/', '/proc', '/sys', '/dev', '/run'}
-for line in du_out.splitlines():
-    parts = line.split('\t', 1)
-    if len(parts) != 2:
+import time
+skip_top = {'proc', 'sys', 'dev', 'run', 'tmp', 'snap', 'lost+found', 'mnt', 'media'}
+priority_order = ['var', 'data', 'opt', 'home', 'root', 'srv', 'usr', 'etc', 'boot']
+root_dev = os.stat('/').st_dev
+cand_dirs = []
+try:
+    entries = os.listdir('/')
+except Exception:
+    entries = []
+for name in entries:
+    if name in skip_top:
         continue
+    full = '/' + name
     try:
-        sz = int(parts[0])
+        if os.path.islink(full) or not os.path.isdir(full):
+            continue
+        if os.stat(full).st_dev != root_dev:
+            continue
+        cand_dirs.append(full)
     except Exception:
         continue
-    p = parts[1].strip()
-    if p in skip or sz < 20 * 1024 * 1024:
-        continue
-    top_dirs.append({'path': p, 'bytes': sz})
+
+def dir_rank(p):
+    base = p.lstrip('/')
+    return (priority_order.index(base) if base in priority_order else 99, base)
+
+cand_dirs.sort(key=dir_rank)
+
+# Probe GNU du vs BusyBox du once
+gnu_du = subprocess.run(['du', '-x', '-B1', '--max-depth=0', '/etc'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).returncode == 0
+
+top_map = {}
+du_deadline = time.monotonic() + 28.0
+for d in cand_dirs:
+    rem = du_deadline - time.monotonic()
+    if rem < 1.5:
+        break
+    per_timeout = min(12.0, rem)
+    if gnu_du:
+        out = run(['du', '-x', '-B1', '--max-depth=1', d], timeout=per_timeout)
+        mult = 1
+    else:
+        out = run(['du', '-x', '-k', '-d', '1', d], timeout=per_timeout)
+        mult = 1024
+    for line in out.splitlines():
+        parts = line.split('\t', 1)
+        if len(parts) != 2:
+            continue
+        try:
+            sz = int(parts[0]) * mult
+        except Exception:
+            continue
+        p = parts[1].strip()
+        if not p or p == '/' or sz < 20 * 1024 * 1024:
+            continue
+        top_map[p] = sz
+
+top_dirs = [{'path': k, 'bytes': v} for k, v in top_map.items()]
 top_dirs.sort(key=lambda x: x['bytes'], reverse=True)
 top_dirs = top_dirs[:14]
 
@@ -303,7 +351,7 @@ print(json.dumps({
 
 func collectDiskAndAssets(srv ServerConfig) (DiskAuditData, error) {
 	res, err := execScript(srv, "python3 - <<'PYEOF'\n"+diskAssetsPy+"\nPYEOF\n", ExecOpts{
-		Timeout: 22 * time.Second,
+		Timeout: 45 * time.Second,
 		Sudo:    true,
 	})
 	if err != nil {

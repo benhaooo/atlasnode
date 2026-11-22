@@ -144,7 +144,9 @@ export const AssetsTab: React.FC<AssetsTabProps> = ({
                   );
                 })}
                 {data.topDirs.length === 0 && (
-                  <div className="text-xs text-slate-500 py-4 text-center">未检测到大于 20MB 的目录</div>
+                  <div className="text-xs text-slate-500 py-4 text-center">
+                    暂无大于 20MB 的目录数据（若磁盘 I/O 繁忙可点击右上角重新扫描）
+                  </div>
                 )}
               </div>
             </section>

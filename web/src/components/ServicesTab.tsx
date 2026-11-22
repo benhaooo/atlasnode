@@ -53,9 +53,15 @@ interface ComposeStackGroup {
 
 interface HostSuiteGroup {
   name: string;
+  partOf?: string;
+  workingDir?: string;
   items: SystemdService[];
+  managedContainers: DockerContainer[];
   runningCount: number;
   failedCount: number;
+  totalCpu: number;
+  totalMemBytes: number;
+  publicPorts: { port: DockerPort; container: string }[];
   description: string;
   allProtected: boolean;
 }
@@ -73,10 +79,20 @@ const INFRA_SYSTEMD = new Set([
   'rngd', 'smartd', 'lm-sensors', 'monit', 'open-vm-tools', 'vmtoolsd',
 ]);
 
-function groupHostServices(services: SystemdService[]): {
+function cleanTargetSuiteName(target: string): string {
+  return target
+    .replace(/\.target$/i, '')
+    .replace(/-(control|main|all|services|group)$/i, '');
+}
+
+function groupHostServices(
+  services: SystemdService[],
+  allContainers: DockerContainer[]
+): {
   suites: HostSuiteGroup[];
   singles: SystemdService[];
   infra: SystemdService[];
+  claimedContainerIds: Set<string>;
 } {
   const infra: SystemdService[] = [];
   const apps: SystemdService[] = [];
@@ -88,10 +104,40 @@ function groupHostServices(services: SystemdService[]): {
     }
   }
 
-  // Group host apps sharing a 2-segment or 1-segment hyphen prefix (e.g. cube-sandbox-*, 1panel-*)
   const assigned = new Set<string>();
-  const suitesMap = new Map<string, SystemdService[]>();
+  const rawSuites: { name: string; partOf?: string; workingDir?: string; items: SystemdService[] }[] = [];
 
+  // Priority 1: Explicit systemd PartOf=*.target
+  const byPartOf = new Map<string, SystemdService[]>();
+  for (const s of apps) {
+    if (!s.partOf) continue;
+    if (!byPartOf.has(s.partOf)) byPartOf.set(s.partOf, []);
+    byPartOf.get(s.partOf)!.push(s);
+  }
+  for (const [target, items] of byPartOf.entries()) {
+    if (items.length >= 2) {
+      const wd = items.find((i) => i.workingDir)?.workingDir;
+      rawSuites.push({ name: cleanTargetSuiteName(target), partOf: target, workingDir: wd, items });
+      for (const it of items) assigned.add(it.name);
+    }
+  }
+
+  // Priority 2: Shared non-root WorkingDirectory
+  const byDir = new Map<string, SystemdService[]>();
+  for (const s of apps) {
+    if (assigned.has(s.name) || !s.workingDir) continue;
+    if (!byDir.has(s.workingDir)) byDir.set(s.workingDir, []);
+    byDir.get(s.workingDir)!.push(s);
+  }
+  for (const [wd, items] of byDir.entries()) {
+    if (items.length >= 2) {
+      const base = wd.split('/').filter(Boolean).pop() || items[0].name.split('-')[0];
+      rawSuites.push({ name: base, workingDir: wd, items });
+      for (const it of items) assigned.add(it.name);
+    }
+  }
+
+  // Priority 3: Fallback hyphen prefix grouping for multi-daemon apps (e.g. 1panel-core + 1panel-agent)
   const tryGroupBySegments = (segCount: number) => {
     const buckets = new Map<string, SystemdService[]>();
     for (const s of apps) {
@@ -104,26 +150,93 @@ function groupHostServices(services: SystemdService[]): {
     }
     for (const [prefix, items] of buckets.entries()) {
       if (items.length >= 2) {
-        suitesMap.set(prefix, items);
+        const wd = items.find((i) => i.workingDir)?.workingDir;
+        rawSuites.push({ name: prefix, workingDir: wd, items });
         for (const it of items) assigned.add(it.name);
       }
     }
   };
-
   tryGroupBySegments(2);
   tryGroupBySegments(1);
 
-  const suites: HostSuiteGroup[] = Array.from(suitesMap.entries()).map(([name, items]) => ({
-    name,
-    items,
-    runningCount: items.filter((i) => i.activeState === 'active').length,
-    failedCount: items.filter((i) => i.activeState === 'failed').length,
-    description: items[0]?.description || '',
-    allProtected: items.every((i) => PROTECTED_SYSTEMD.has(i.name)),
-  }));
+  // Deterministically attach Docker containers managed by a Host Suite
+  // (Rule A: composeDir is under suite's WorkingDirectory; Rule B: standalone container matched by suite's wrapper unit)
+  const claimedContainerIds = new Set<string>();
+  const suites: HostSuiteGroup[] = rawSuites.map((rs) => {
+    const suiteDirs = new Set(
+      rs.items
+        .map((i) => i.workingDir?.replace(/\/+$/, ''))
+        .filter((d): d is string => Boolean(d && d !== '/'))
+    );
+    if (rs.workingDir) suiteDirs.add(rs.workingDir.replace(/\/+$/, ''));
+
+    const suiteRoot = rs.name.split('-')[0].toLowerCase();
+    const wrapperSuffixes = rs.items
+      .filter((u) => /container|proxy|coredns|egress/i.test(u.description || ''))
+      .map((u) => u.name.toLowerCase());
+
+    const managed: DockerContainer[] = [];
+    for (const c of allContainers) {
+      if (claimedContainerIds.has(c.id)) continue;
+      const cDir = c.composeDir?.replace(/\/+$/, '');
+      let matched = false;
+      if (cDir && suiteDirs.size > 0) {
+        for (const wd of suiteDirs) {
+          if (cDir === wd || cDir.startsWith(wd + '/')) {
+            matched = true;
+            break;
+          }
+        }
+      }
+      if (!matched && !c.composeProject && suiteRoot.length >= 3 && c.name.toLowerCase().startsWith(suiteRoot + '-')) {
+        const cLow = c.name.toLowerCase();
+        const cTail = cLow.split('-').pop() || '';
+        if (
+          wrapperSuffixes.some(
+            (u) => u.endsWith('-' + cLow) || (cTail.length >= 4 && u.endsWith('-' + cTail))
+          )
+        ) {
+          matched = true;
+        }
+      }
+      if (matched) {
+        claimedContainerIds.add(c.id);
+        managed.push(c);
+      }
+    }
+
+    const totalCpu = managed.reduce((acc, c) => acc + (c.state === 'running' ? c.cpuPercent || 0 : 0), 0);
+    const totalMemBytes = managed.reduce((acc, c) => acc + (c.state === 'running' ? parseMemToBytes(c.memUsage) : 0), 0);
+    const seenPort = new Set<string>();
+    const publicPorts: { port: DockerPort; container: string }[] = [];
+    for (const c of managed) {
+      for (const p of c.ports) {
+        if (!p.quickUrl) continue;
+        const pk = `${p.hostPort}->${p.containerPort}/${p.proto}`;
+        if (seenPort.has(pk)) continue;
+        seenPort.add(pk);
+        publicPorts.push({ port: p, container: c.name });
+      }
+    }
+
+    return {
+      name: rs.name,
+      partOf: rs.partOf,
+      workingDir: rs.workingDir,
+      items: rs.items,
+      managedContainers: managed,
+      runningCount: rs.items.filter((i) => i.activeState === 'active').length,
+      failedCount: rs.items.filter((i) => i.activeState === 'failed').length,
+      totalCpu,
+      totalMemBytes,
+      publicPorts,
+      description: rs.items[0]?.description || '',
+      allProtected: rs.items.every((i) => PROTECTED_SYSTEMD.has(i.name)),
+    };
+  });
 
   const singles = apps.filter((s) => !assigned.has(s.name));
-  return { suites, singles, infra };
+  return { suites, singles, infra, claimedContainerIds };
 }
 
 function parseMemToBytes(memUsage?: string): number {
@@ -478,13 +591,75 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
     }
   };
 
-  // Partition Docker containers into Compose Project Stacks + Standalone Single-Container Services
+  // Group host apps & determine which Docker containers are managed by a Host Suite
+  const { hostSuites, hostSingles, infraSystemd, claimedContainerIds } = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const { suites, singles, infra, claimedContainerIds: claimed } = groupHostServices(systemdServices, containers);
+
+    const filteredSuites = suites
+      .filter((st) => {
+        if (
+          q &&
+          !st.name.toLowerCase().includes(q) &&
+          !st.description.toLowerCase().includes(q) &&
+          !(st.workingDir || '').toLowerCase().includes(q) &&
+          !st.items.some((i) => i.name.toLowerCase().includes(q)) &&
+          !st.managedContainers.some((c) => c.name.toLowerCase().includes(q) || c.image.toLowerCase().includes(q))
+        ) {
+          return false;
+        }
+        if (statusFilter === 'running' && st.runningCount === 0) return false;
+        if (statusFilter === 'stopped' && st.runningCount > 0) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const aRun = a.runningCount > 0 ? 1 : 0;
+        const bRun = b.runningCount > 0 ? 1 : 0;
+        if (aRun !== bRun) return bRun - aRun;
+        return b.items.length + b.managedContainers.length - (a.items.length + a.managedContainers.length);
+      });
+
+    const filteredSingles = singles
+      .filter((s) => {
+        if (q && !s.name.toLowerCase().includes(q) && !(s.description || '').toLowerCase().includes(q)) {
+          return false;
+        }
+        if (statusFilter === 'running' && s.activeState !== 'active') return false;
+        if (statusFilter === 'stopped' && s.activeState === 'active') return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const aRun = a.activeState === 'active' ? 1 : 0;
+        const bRun = b.activeState === 'active' ? 1 : 0;
+        if (aRun !== bRun) return bRun - aRun;
+        return a.name.localeCompare(b.name);
+      });
+
+    const filteredInfra = infra.filter((s) => {
+      if (q && !s.name.toLowerCase().includes(q) && !(s.description || '').toLowerCase().includes(q)) {
+        return false;
+      }
+      if (statusFilter === 'running' && s.activeState !== 'active') return false;
+      if (statusFilter === 'stopped' && s.activeState === 'active') return false;
+      return true;
+    });
+
+    return {
+      hostSuites: filteredSuites,
+      hostSingles: filteredSingles,
+      infraSystemd: filteredInfra,
+      claimedContainerIds: claimed,
+    };
+  }, [systemdServices, containers, query, statusFilter]);
+
+  // Partition remaining Docker containers (not owned by a Host Suite) into Compose Stacks + Standalone Services
   const { stacks, standalones } = useMemo(() => {
     const q = query.trim().toLowerCase();
     const stackMap = new Map<string, DockerContainer[]>();
     const standaloneList: DockerContainer[] = [];
 
     for (const c of containers) {
+      if (claimedContainerIds.has(c.id)) continue;
       if (c.composeProject) {
         if (!stackMap.has(c.composeProject)) stackMap.set(c.composeProject, []);
         stackMap.get(c.composeProject)!.push(c);
@@ -571,60 +746,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
       });
 
     return { stacks: builtStacks, standalones: filteredStandalones };
-  }, [containers, query, statusFilter]);
-
-  const { hostSuites, hostSingles, infraSystemd } = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const { suites, singles, infra } = groupHostServices(systemdServices);
-
-    const filteredSuites = suites
-      .filter((st) => {
-        if (
-          q &&
-          !st.name.toLowerCase().includes(q) &&
-          !st.description.toLowerCase().includes(q) &&
-          !st.items.some((i) => i.name.toLowerCase().includes(q))
-        ) {
-          return false;
-        }
-        if (statusFilter === 'running' && st.runningCount === 0) return false;
-        if (statusFilter === 'stopped' && st.runningCount > 0) return false;
-        return true;
-      })
-      .sort((a, b) => {
-        const aRun = a.runningCount > 0 ? 1 : 0;
-        const bRun = b.runningCount > 0 ? 1 : 0;
-        if (aRun !== bRun) return bRun - aRun;
-        return b.items.length - a.items.length;
-      });
-
-    const filteredSingles = singles
-      .filter((s) => {
-        if (q && !s.name.toLowerCase().includes(q) && !(s.description || '').toLowerCase().includes(q)) {
-          return false;
-        }
-        if (statusFilter === 'running' && s.activeState !== 'active') return false;
-        if (statusFilter === 'stopped' && s.activeState === 'active') return false;
-        return true;
-      })
-      .sort((a, b) => {
-        const aRun = a.activeState === 'active' ? 1 : 0;
-        const bRun = b.activeState === 'active' ? 1 : 0;
-        if (aRun !== bRun) return bRun - aRun;
-        return a.name.localeCompare(b.name);
-      });
-
-    const filteredInfra = infra.filter((s) => {
-      if (q && !s.name.toLowerCase().includes(q) && !(s.description || '').toLowerCase().includes(q)) {
-        return false;
-      }
-      if (statusFilter === 'running' && s.activeState !== 'active') return false;
-      if (statusFilter === 'stopped' && s.activeState === 'active') return false;
-      return true;
-    });
-
-    return { hostSuites: filteredSuites, hostSingles: filteredSingles, infraSystemd: filteredInfra };
-  }, [systemdServices, query, statusFilter]);
+  }, [containers, claimedContainerIds, query, statusFilter]);
 
   const allQuickLinks = useMemo(
     () => [...snapshot.server.quickLinks, ...snapshot.detectedLinks],
@@ -1158,15 +1280,28 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                               </span>
                             </button>
                             <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-indigo-500/12 border border-indigo-400/25 text-indigo-300 shrink-0">
-                              宿主机套件
+                              {suite.managedContainers.length > 0 ? '宿主机 + 容器套件' : '宿主机套件'}
                             </span>
                             <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border shrink-0 ${statusTone.pill}`}>
                               {statusTone.label}
                             </span>
+                            {suite.managedContainers.length > 0 && isRunning && (
+                              <div className="flex items-center gap-2.5 text-[11px] font-mono text-slate-300 bg-[#090b10] border border-white/[0.06] rounded-lg px-2.5 py-0.5">
+                                <span className="inline-flex items-center gap-1">
+                                  <Cpu className="w-3 h-3 text-sky-400" />
+                                  {suite.totalCpu.toFixed(1)}%
+                                </span>
+                                <span className="text-slate-700">·</span>
+                                <span className="inline-flex items-center gap-1">
+                                  <MemoryStick className="w-3 h-3 text-indigo-400" />
+                                  {suite.totalMemBytes > 0 ? formatBytes(suite.totalMemBytes, 1) : '—'}
+                                </span>
+                              </div>
+                            )}
                           </div>
 
-                          {(matchedLinks.length > 0 || suite.description) && (
-                            <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                          {(matchedLinks.length > 0 || suite.publicPorts.length > 0 || suite.workingDir || suite.description) && (
+                            <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
                               {matchedLinks.map((lk) => (
                                 <a
                                   key={lk.id}
@@ -1179,7 +1314,30 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                                   <ExternalLink className="w-2.5 h-2.5" />
                                 </a>
                               ))}
-                              {suite.description && (
+                              {suite.publicPorts.map(({ port, container }, idx) => (
+                                <a
+                                  key={`spub-${idx}`}
+                                  href={port.quickUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-1 font-mono bg-sky-500/12 hover:bg-sky-500/22 border border-sky-400/25 text-sky-300 px-2 py-0.5 rounded-md transition-colors"
+                                >
+                                  <span>:{port.hostPort}</span>
+                                  <span className="text-sky-400/70 text-[10px]">{container}</span>
+                                  <ExternalLink className="w-2.5 h-2.5" />
+                                </a>
+                              ))}
+                              {suite.workingDir && (
+                                <button
+                                  onClick={() => onJumpFolder(suite.workingDir!)}
+                                  title={`打开项目目录 ${suite.workingDir}`}
+                                  className="inline-flex items-center gap-1 font-mono text-slate-400 hover:text-sky-300 bg-[#090b10] border border-white/[0.06] hover:border-sky-400/30 px-2 py-0.5 rounded-md cursor-pointer max-w-full"
+                                >
+                                  <FolderOpen className="w-3 h-3 text-amber-400/80 shrink-0" />
+                                  <span className="truncate max-w-[240px]">{suite.workingDir}</span>
+                                </button>
+                              )}
+                              {suite.description && suite.publicPorts.length === 0 && !suite.workingDir && (
                                 <span className="text-slate-400 truncate max-w-xl">{suite.description}</span>
                               )}
                             </div>
@@ -1195,7 +1353,13 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                               ) : (
                                 <ChevronRight className="w-3.5 h-3.5" />
                               )}
-                              <span>{isExpanded ? '收起子服务' : `展开 ${suite.items.length} 个子服务`}</span>
+                              <span>
+                                {isExpanded
+                                  ? '收起明细'
+                                  : suite.managedContainers.length > 0
+                                    ? `展开 ${suite.items.length} 个服务 · ${suite.managedContainers.length} 个托管容器`
+                                    : `展开 ${suite.items.length} 个子服务`}
+                              </span>
                             </button>
                             {!isExpanded && (
                               <div className="flex flex-wrap items-center gap-1 text-[10px] font-mono text-slate-500">
@@ -1268,6 +1432,80 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
 
                     {isExpanded && (
                       <div className="border-t border-white/[0.06] bg-[#0a0d14] divide-y divide-white/[0.04]">
+                        {suite.managedContainers.length > 0 && (
+                          <>
+                            <div className="px-4 sm:px-5 py-2 bg-white/[0.015] flex flex-wrap items-center justify-between gap-2 text-[10px] font-mono text-slate-400">
+                              <span className="font-semibold uppercase tracking-wider text-sky-300">
+                                托管的 Docker 容器 ({suite.managedContainers.filter((c) => c.state === 'running').length}/{suite.managedContainers.length})
+                              </span>
+                              <span className="text-slate-500">
+                                由上方 Systemd 套件托管，整体启停请使用套件按钮
+                              </span>
+                            </div>
+                            {suite.managedContainers.map((c) => {
+                              const cRunning = c.state === 'running';
+                              return (
+                                <div
+                                  key={`mc-${c.id}`}
+                                  className="px-4 sm:px-5 py-2.5 flex flex-col lg:flex-row lg:items-center justify-between gap-2 hover:bg-white/[0.015]"
+                                >
+                                  <div className="min-w-0 flex-1 space-y-1">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span
+                                        className={`w-2 h-2 rounded-full shrink-0 ${
+                                          c.health === 'unhealthy'
+                                            ? 'bg-rose-500'
+                                            : cRunning
+                                              ? 'bg-emerald-400'
+                                              : 'bg-slate-600'
+                                        }`}
+                                      />
+                                      <span className="text-xs font-semibold text-slate-100 font-mono">
+                                        {c.name}
+                                      </span>
+                                      <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-sky-500/10 border border-sky-400/20 text-sky-300">
+                                        容器
+                                      </span>
+                                      <span className="text-[11px] text-slate-500 truncate max-w-full sm:max-w-sm font-mono">
+                                        {c.image}
+                                      </span>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-2 pl-4 text-[11px] text-slate-400">
+                                      <span>{c.status}</span>
+                                      {cRunning && (c.cpuPercent !== undefined || c.memUsage) && (
+                                        <span className="font-mono text-[10px] text-slate-500">
+                                          CPU {(c.cpuPercent ?? 0).toFixed(1)}% · {c.memUsage?.split('/')[0]?.trim() || '—'}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-1.5 pl-4 lg:pl-0 shrink-0 flex-wrap">
+                                    <button
+                                      onClick={() => handleOpenDockerLogs(c)}
+                                      className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.07] text-slate-300 hover:text-white cursor-pointer"
+                                    >
+                                      <FileText className="w-3 h-3" />
+                                      <span>日志</span>
+                                    </button>
+                                    {cRunning && onOpenContainerTerminal && (
+                                      <button
+                                        onClick={() => onOpenContainerTerminal(c.name)}
+                                        className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/[0.04] hover:bg-emerald-500/20 border border-white/[0.07] text-slate-300 hover:text-emerald-300 cursor-pointer"
+                                      >
+                                        <Terminal className="w-3 h-3" />
+                                        <span>终端</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                            <div className="px-4 sm:px-5 py-2 bg-white/[0.015] text-[10px] font-mono font-semibold uppercase tracking-wider text-indigo-300">
+                              Systemd 托管单元 ({suite.runningCount}/{suite.items.length})
+                              {suite.partOf && <span className="ml-2 text-slate-500 font-normal">PartOf={suite.partOf}</span>}
+                            </div>
+                          </>
+                        )}
                         {suite.items.map((svc) => {
                           const isActive = svc.activeState === 'active';
                           const isFailed = svc.activeState === 'failed';

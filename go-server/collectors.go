@@ -1022,6 +1022,32 @@ for short in cand_units[:30]:
         'subState': kv.get('SubState', 'dead'),
     })
 
+if svcs:
+    unit_names = [s['name'] + '.service' for s in svcs]
+    meta_out = run(['systemctl', 'show', '--property=Id,PartOf,WorkingDirectory', '--no-pager'] + unit_names, timeout=8)
+    meta_map = {}
+    cur = {}
+    for ln in meta_out.splitlines() + ['']:
+        if not ln.strip():
+            uid = cur.get('Id', '')
+            if uid.endswith('.service'):
+                meta_map[uid[:-8]] = cur
+            cur = {}
+        elif '=' in ln:
+            k, v = ln.split('=', 1)
+            cur[k] = v
+    sys_targets = ('multi-user.', 'graphical.', 'network', 'sysinit.', 'basic.', 'default.', 'shutdown.')
+    for s in svcs:
+        m = meta_map.get(s['name'], {})
+        po = (m.get('PartOf') or '').strip()
+        wd = (m.get('WorkingDirectory') or '').strip().rstrip('/')
+        if po:
+            cands = [t for t in po.split() if t.endswith('.target') and not t.startswith(sys_targets)]
+            if cands:
+                s['partOf'] = cands[0]
+        if wd and wd != '/':
+            s['workingDir'] = wd
+
 print(json.dumps({'dockerAvailable': docker_ok, 'containersRaw': containers_raw, 'inspectMap': inspect_map, 'statsMap': stats_map, 'systemdServices': svcs}))
 `
 

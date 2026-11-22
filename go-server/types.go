@@ -118,6 +118,8 @@ type SystemdService struct {
 	ActiveState string `json:"activeState"`
 	SubState    string `json:"subState"`
 	Memory      string `json:"memory,omitempty"`
+	PartOf      string `json:"partOf,omitempty"`
+	WorkingDir  string `json:"workingDir,omitempty"`
 }
 
 type ListeningPort struct {

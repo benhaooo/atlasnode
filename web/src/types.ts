@@ -115,6 +115,8 @@ export interface SystemdService {
   description: string;
   activeState: string;
   subState: string;
+  partOf?: string;
+  workingDir?: string;
 }
 
 export interface ListeningPort {

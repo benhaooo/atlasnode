@@ -113,9 +113,9 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
     <div className="space-y-5">
       {/* Notes strip if present */}
       {snapshot.server.notes && (
-        <div className="bg-[#0f131b] border border-white/[0.06] rounded-xl px-4 py-2.5 flex items-center justify-between gap-4 text-xs">
+        <div className="bg-[#0f131b] border border-white/[0.06] rounded-xl px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 sm:gap-4 text-xs">
           <p className="text-slate-300">{snapshot.server.notes}</p>
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex flex-wrap items-center gap-1.5 shrink-0">
             {snapshot.server.tags.map((tag) => (
               <span
                 key={tag}
@@ -131,7 +131,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
       {/* TIER 1 (HERO ROW): 7 cols Real-Time Telemetry + 5 cols What's Inside & Quick Access */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Real-Time Telemetry */}
-        <section className="lg:col-span-7 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 flex flex-col justify-between gap-5">
+        <section className="lg:col-span-7 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 flex flex-col justify-between gap-5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h2 className="text-sm font-semibold text-white">算力与网络流量</h2>
@@ -267,10 +267,10 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         </section>
 
         {/* Right 5 Cols: What's Inside & Quick Launch */}
-        <section className="lg:col-span-5 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 flex flex-col justify-between gap-4">
+        <section className="lg:col-span-5 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 flex flex-col justify-between gap-4">
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
                 <h2 className="text-sm font-semibold text-white">快捷访问 · 机内服务</h2>
                 <p className="text-[11px] text-slate-500 mt-0.5">
                   直达面板、Web 应用与项目目录
@@ -278,7 +278,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
               </div>
               <button
                 onClick={() => setAddingLink(!addingLink)}
-                className="flex items-center gap-1 text-[11px] text-sky-400 hover:text-sky-300 bg-sky-500/10 border border-sky-400/20 px-2.5 py-1 rounded-lg cursor-pointer"
+                className="flex items-center gap-1 text-[11px] text-sky-400 hover:text-sky-300 bg-sky-500/10 border border-sky-400/20 px-2.5 py-1 rounded-lg cursor-pointer shrink-0"
               >
                 <Plus className="w-3 h-3" />
                 <span>添加入口</span>
@@ -290,7 +290,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                 onSubmit={handleAddLink}
                 className="bg-[#090b10] border border-white/10 rounded-xl p-3 space-y-2 text-xs"
               >
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <input
                     required
                     placeholder="名称（如 AFFiNE）"
@@ -365,7 +365,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                         <button
                           onClick={(e) => handleRemoveLink(link.id, e)}
                           title="删除快捷入口"
-                          className="opacity-0 group-hover/link:opacity-100 p-1 text-slate-500 hover:text-rose-400 transition-all cursor-pointer"
+                          className="opacity-100 lg:opacity-0 lg:group-hover/link:opacity-100 p-1 text-slate-500 hover:text-rose-400 transition-all cursor-pointer"
                         >
                           <Trash2 className="w-3 h-3" />
                         </button>
@@ -423,8 +423,8 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
       {/* TIER 2: NodeQuality Executive Digest (6 cols) + Security Exposure & Top Processes (6 cols) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* NodeQuality Executive Digest */}
-        <section className="lg:col-span-6 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 flex flex-col justify-between gap-4">
-          <div className="flex items-center justify-between">
+        <section className="lg:col-span-6 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 flex flex-col justify-between gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Zap className="w-4 h-4 text-emerald-400" />
               <h2 className="text-sm font-semibold text-white">NodeQuality 质量结论</h2>
@@ -441,7 +441,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           {nq ? (
             <div className="space-y-4">
               {/* IP & Risk Headline */}
-              <div className="grid grid-cols-3 gap-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                 <div className="bg-[#090b10] border border-white/[0.06] rounded-xl p-3">
                   <div className="text-[10px] text-slate-500">归属 / ASN</div>
                   <div className="text-xs font-semibold text-white mt-1 truncate">
@@ -562,11 +562,11 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         </section>
 
         {/* Right 6 Cols: Exposure Surface & Top Processes */}
-        <section className="lg:col-span-6 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 space-y-4">
+        <section className="lg:col-span-6 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-4">
           {/* Public Ports Snapshot */}
           <div>
-            <div className="flex items-center justify-between mb-2.5">
-              <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5">
+              <div className="flex items-center gap-2 flex-wrap">
                 {snapshot.firewallSummary.active ? (
                   <Shield className="w-4 h-4 text-emerald-400" />
                 ) : (
@@ -644,19 +644,19 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
       <section className="bg-[#0f131b] border border-white/[0.06] rounded-2xl overflow-hidden">
         <button
           onClick={() => setShowSpecs(!showSpecs)}
-          className="w-full px-5 py-3.5 flex items-center justify-between text-left hover:bg-white/[0.02] transition-colors cursor-pointer"
+          className="w-full px-4 sm:px-5 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-left hover:bg-white/[0.02] transition-colors cursor-pointer"
         >
           <div className="flex items-center gap-2 text-xs font-medium text-slate-300">
-            {showSpecs ? <ChevronDown className="w-4 h-4 text-slate-500" /> : <ChevronRight className="w-4 h-4 text-slate-500" />}
+            {showSpecs ? <ChevronDown className="w-4 h-4 text-slate-500 shrink-0" /> : <ChevronRight className="w-4 h-4 text-slate-500 shrink-0" />}
             <span>底层硬件指纹、存储分区与网卡详情</span>
           </div>
-          <span className="text-[11px] font-mono text-slate-500">
+          <span className="text-[11px] font-mono text-slate-500 pl-6 sm:pl-0 truncate">
             {snapshot.hostname} · Kernel {snapshot.kernel} · {snapshot.arch}
           </span>
         </button>
 
         {showSpecs && (
-          <div className="px-5 pb-5 pt-2 border-t border-white/[0.05] grid grid-cols-1 md:grid-cols-2 gap-5 text-xs">
+          <div className="px-4 sm:px-5 pb-4 sm:pb-5 pt-2 border-t border-white/[0.05] grid grid-cols-1 md:grid-cols-2 gap-5 text-xs">
             <div>
               <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 mb-2">
                 磁盘挂载点
@@ -665,9 +665,9 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                 {snapshot.disks.map((d) => (
                   <div
                     key={d.mount}
-                    className="flex items-center justify-between bg-[#090b10] border border-white/[0.05] rounded-lg px-3 py-2"
+                    className="flex flex-wrap items-center justify-between gap-1.5 bg-[#090b10] border border-white/[0.05] rounded-lg px-3 py-2"
                   >
-                    <div className="truncate">
+                    <div className="min-w-0 truncate">
                       <span className="text-slate-200">{d.mount}</span>{' '}
                       <span className="text-[10px] text-slate-500">({d.device} · {d.fsType})</span>
                     </div>
@@ -690,11 +690,11 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                 {snapshot.interfaces.map((iface) => (
                   <div
                     key={iface.name}
-                    className="flex items-center justify-between bg-[#090b10] border border-white/[0.05] rounded-lg px-3 py-2"
+                    className="flex flex-wrap items-center justify-between gap-1.5 bg-[#090b10] border border-white/[0.05] rounded-lg px-3 py-2"
                   >
                     <div className="min-w-0">
                       <span className="text-sky-300">{iface.name}</span>{' '}
-                      <span className="text-slate-300 text-[11px]">{iface.ipv4.join(', ') || '—'}</span>
+                      <span className="text-slate-300 text-[11px] break-all">{iface.ipv4.join(', ') || '—'}</span>
                     </div>
                     <div className="text-[10px] text-slate-500 shrink-0">
                       ↓{formatBytes(iface.rxBytes, 0)} ↑{formatBytes(iface.txBytes, 0)}

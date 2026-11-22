@@ -72,7 +72,7 @@ export const AssetsTab: React.FC<AssetsTabProps> = ({
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-white">磁盘空间归因与机内资产清单</h2>
           <p className="text-xs text-slate-400 mt-0.5">
@@ -82,7 +82,7 @@ export const AssetsTab: React.FC<AssetsTabProps> = ({
         <button
           onClick={load}
           disabled={loading}
-          className="flex items-center gap-1.5 text-xs bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-200 px-3 py-1.5 rounded-xl cursor-pointer"
+          className="flex items-center gap-1.5 text-xs bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-200 px-3 py-1.5 rounded-xl cursor-pointer shrink-0"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-sky-400' : ''}`} />
           <span>重新扫描</span>
@@ -106,10 +106,10 @@ export const AssetsTab: React.FC<AssetsTabProps> = ({
         <div className="space-y-5">
           {/* Row 1: Top Large Directories (7 cols) + Docker Space Breakdown (5 cols) */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-            <section className="lg:col-span-7 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 space-y-3">
-              <div className="flex items-center justify-between">
+            <section className="lg:col-span-7 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-                  <HardDrive className="w-3.5 h-3.5 text-amber-400" />
+                  <HardDrive className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                   空间占用 Top 目录（点击进入文件管理）
                 </h3>
                 <span className="text-[10px] font-mono text-slate-500">根分区同文件系统</span>
@@ -151,7 +151,7 @@ export const AssetsTab: React.FC<AssetsTabProps> = ({
 
             <section className="lg:col-span-5 space-y-5">
               {/* Docker Disk Breakdown + Safe Prune */}
-              <div className="bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 space-y-3.5">
+              <div className="bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-3.5">
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
                   <Box className="w-3.5 h-3.5 text-sky-400" />
                   Docker 空间占用与安全清理
@@ -214,7 +214,7 @@ export const AssetsTab: React.FC<AssetsTabProps> = ({
               </div>
 
               {/* Installed Runtimes */}
-              <div className="bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 space-y-3">
+              <div className="bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-3">
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
                   <Cpu className="w-3.5 h-3.5 text-emerald-400" />
                   机内关键运行环境 ({data.runtimes.length})
@@ -238,7 +238,7 @@ export const AssetsTab: React.FC<AssetsTabProps> = ({
 
           {/* Row 2: Crontabs & Systemd Timers */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-            <section className="lg:col-span-7 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 space-y-3">
+            <section className="lg:col-span-7 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-3">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5 text-indigo-400" />
                 Crontab 定时任务 ({data.crontabs.length})
@@ -265,7 +265,7 @@ export const AssetsTab: React.FC<AssetsTabProps> = ({
               )}
             </section>
 
-            <section className="lg:col-span-5 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 space-y-3">
+            <section className="lg:col-span-5 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-3">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300">
                 Systemd Timers ({data.timers.length})
               </h3>

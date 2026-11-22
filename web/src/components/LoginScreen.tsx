@@ -28,7 +28,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onSuccess }) => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#090b10] px-4 relative overflow-hidden">
+    <div className="min-h-dvh flex items-center justify-center bg-[#090b10] px-4 relative overflow-hidden">
       {/* Subtle radial backdrop */}
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(56,189,248,0.10),_transparent_55%)]" />
 

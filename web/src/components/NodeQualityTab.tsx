@@ -315,8 +315,8 @@ export const NodeQualityTab: React.FC<NodeQualityTabProps> = ({ snapshot, onRefr
       {/* Top Control Strip */}
       <section className="bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <Zap className="w-4 h-4 text-emerald-400" />
+          <div className="flex flex-wrap items-center gap-2">
+            <Zap className="w-4 h-4 text-emerald-400 shrink-0" />
             <h2 className="text-sm font-semibold text-white">NodeQuality 服务器质检报告</h2>
             <span className="text-[10px] font-mono text-slate-500 bg-white/[0.04] px-2 py-0.5 rounded">
               Hardware · IP · Net · Backroute
@@ -371,8 +371,8 @@ export const NodeQualityTab: React.FC<NodeQualityTabProps> = ({ snapshot, onRefr
       {/* Live Streaming Runner */}
       {activeJob && (
         <section className="bg-[#0c0f16] border border-amber-400/30 rounded-2xl overflow-hidden">
-          <div className="px-4 py-3 bg-amber-500/[0.08] border-b border-amber-400/20 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5 text-xs">
+          <div className="px-4 py-3 bg-amber-500/[0.08] border-b border-amber-400/20 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
               <Activity className="w-4 h-4 text-amber-400 animate-pulse" />
               <span className="font-semibold text-amber-200">{activeJob.phase}</span>
               <span className="text-[11px] font-mono text-slate-400">
@@ -702,13 +702,13 @@ export const NodeQualityTab: React.FC<NodeQualityTabProps> = ({ snapshot, onRefr
 
           {/* TIER 2A: Visual Streaming & AI Cards (Full width compact scorecard) */}
           {summary.unlocks.length > 0 && (
-            <section className="bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 space-y-3">
-              <div className="flex items-center justify-between">
+            <section className="bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
                   <Tv className="w-3.5 h-3.5 text-indigo-400" />
                   流媒体与 AI 平台解锁
                 </h3>
-                <div className="flex items-center gap-3 text-[10px] text-slate-500">
+                <div className="flex flex-wrap items-center gap-3 text-[10px] text-slate-500">
                   <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> 原生</span>
                   <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-sky-400" /> DNS</span>
                   <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-amber-400" /> 仅APP</span>
@@ -787,7 +787,7 @@ export const NodeQualityTab: React.FC<NodeQualityTabProps> = ({ snapshot, onRefr
           {(summary.ip.riskSources.length > 0 || activeFactors.length > 0) && (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
               {/* Left 5 cols: Risk Score Gauges + Type Matrix */}
-              <section className="lg:col-span-5 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 space-y-4">
+              <section className="lg:col-span-5 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-4">
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300">
                   风控库评分与 IP 属性
                 </h3>
@@ -848,9 +848,9 @@ export const NodeQualityTab: React.FC<NodeQualityTabProps> = ({ snapshot, onRefr
               </section>
 
               {/* Right 7 cols: Compact Icon-based Risk Factor Matrix */}
-              <section className="lg:col-span-7 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 flex flex-col justify-between gap-3">
+              <section className="lg:col-span-7 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 flex flex-col justify-between gap-3">
                 <div className="space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300">
                       风险因子交叉判定
                     </h3>
@@ -862,7 +862,7 @@ export const NodeQualityTab: React.FC<NodeQualityTabProps> = ({ snapshot, onRefr
                   </div>
 
                   <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
+                    <table className="w-full text-xs whitespace-nowrap">
                       <thead>
                         <tr className="text-[11px] text-slate-500 border-b border-white/[0.06]">
                           <th className="pb-2 text-left font-medium">数据库</th>
@@ -940,7 +940,7 @@ export const NodeQualityTab: React.FC<NodeQualityTabProps> = ({ snapshot, onRefr
             sortedTransfers.length > 0 ||
             (summary.network.delays && summary.network.delays.length > 0) ||
             summary.network.speedtests.length > 0) && (
-            <section className="bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 space-y-6">
+            <section className="bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-6">
               {/* Section Header + BGP/Local Pills */}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
@@ -980,8 +980,8 @@ export const NodeQualityTab: React.FC<NodeQualityTabProps> = ({ snapshot, onRefr
                       <Route className="w-3.5 h-3.5 text-emerald-400" />
                       北上广三网回程摘要
                     </div>
-                    <div className="bg-[#090b10] border border-white/[0.06] rounded-xl overflow-hidden">
-                      <table className="w-full text-xs">
+                    <div className="bg-[#090b10] border border-white/[0.06] rounded-xl overflow-x-auto">
+                      <table className="w-full text-xs whitespace-nowrap">
                         <thead>
                           <tr className="text-[11px] text-slate-500 border-b border-white/[0.06] bg-white/[0.015]">
                             <th className="py-2 px-3 text-left font-medium">目标</th>
@@ -1164,7 +1164,7 @@ export const NodeQualityTab: React.FC<NodeQualityTabProps> = ({ snapshot, onRefr
                 <div className="space-y-2 pt-3 border-t border-white/[0.06]">
                   <div className="text-[11px] font-medium text-slate-400">测速结果</div>
                   <div className="overflow-x-auto">
-                    <table className="w-full text-xs font-mono">
+                    <table className="w-full text-xs font-mono whitespace-nowrap">
                       <thead>
                         <tr className="text-[11px] text-slate-500 border-b border-white/[0.06] text-left">
                           <th className="pb-2">节点</th>
@@ -1194,7 +1194,7 @@ export const NodeQualityTab: React.FC<NodeQualityTabProps> = ({ snapshot, onRefr
 
           {/* TIER 2D: Hardware Deep Profile */}
           {(summary.hardware.cpuModel || summary.hardware.memory || summary.hardware.disk) && (
-            <section className="bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 space-y-4">
+            <section className="bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-4">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
                   <HardDrive className="w-3.5 h-3.5 text-amber-400" />
@@ -1309,7 +1309,7 @@ export const NodeQualityTab: React.FC<NodeQualityTabProps> = ({ snapshot, onRefr
           <section className="bg-[#0f131b] border border-white/[0.06] rounded-2xl overflow-hidden">
             <button
               onClick={() => setShowRawLogs(!showRawLogs)}
-              className="w-full px-5 py-3.5 flex items-center justify-between text-left hover:bg-white/[0.02] cursor-pointer"
+              className="w-full px-4 sm:px-5 py-3.5 flex flex-wrap items-center justify-between gap-2 text-left hover:bg-white/[0.02] cursor-pointer"
             >
               <div className="flex items-center gap-2 text-xs font-medium text-slate-200">
                 {showRawLogs ? <ChevronDown className="w-4 h-4 text-slate-500" /> : <ChevronRight className="w-4 h-4 text-slate-500" />}

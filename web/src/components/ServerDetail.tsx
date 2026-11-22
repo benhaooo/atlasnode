@@ -200,14 +200,14 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
   const sshCmd = `ssh ${snapshot.server.username}@${snapshot.tailscaleIp || snapshot.publicIp || snapshot.server.host}${snapshot.server.port !== 22 ? ` -p ${snapshot.server.port}` : ''}`;
 
   return (
-    <div className="min-h-screen flex flex-col">
-      {/* Persistent Top Identity & Navigation Bar */}
-      <header className="sticky top-0 z-20 bg-[#090b10]/90 backdrop-blur-md border-b border-white/[0.06]">
-        <div className="max-w-7xl mx-auto px-6 pt-4 pb-0">
+    <div className="min-h-dvh flex flex-col">
+      {/* Server Identity Bar (scrolls away on mobile to save vertical space, sticky with tabs on lg+) */}
+      <div className="bg-[#090b10] border-b border-white/[0.04] lg:border-b-0">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-3 sm:pt-4 pb-3 sm:pb-3.5">
           {/* Identity Row */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3.5">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
             <div className="min-w-0">
-              <div className="flex items-center gap-2.5 flex-wrap">
+              <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap">
                 <span
                   className={`w-2.5 h-2.5 rounded-full shrink-0 ${
                     snapshot.online
@@ -218,7 +218,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                 <span className="text-base leading-none">
                   {serverFlag(snapshot.server.region, snapshot.latestNodeQuality?.summary.ip.country, snapshot.server.tags)}
                 </span>
-                <h1 className="text-lg font-semibold text-white tracking-tight">
+                <h1 className="text-base sm:text-lg font-semibold text-white tracking-tight">
                   {snapshot.server.name}
                 </h1>
                 <span className="text-xs text-sky-300/90 font-medium">{snapshot.server.role}</span>
@@ -231,7 +231,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                 )}
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 mt-1.5 text-[11px] font-mono text-slate-400">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1.5 text-[11px] font-mono text-slate-400">
                 {snapshot.publicIp && (
                   <button
                     onClick={() => handleCopy('pub', snapshot.publicIp!)}
@@ -266,7 +266,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-2 flex-wrap shrink-0">
               <button
                 onClick={() => handleCopy('ssh', sshCmd)}
                 className="flex items-center gap-1.5 text-xs font-mono bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
@@ -277,14 +277,14 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
               <button
                 onClick={() => setEditingMeta(true)}
                 title="编辑节点备注与用途"
-                className="p-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-300 hover:text-white transition-colors cursor-pointer"
+                className="p-2 sm:p-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-300 hover:text-white transition-colors cursor-pointer"
               >
                 <Edit3 className="w-3.5 h-3.5" />
               </button>
               <button
                 onClick={onRefreshSnapshot}
                 title="刷新快照"
-                className="p-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-300 hover:text-white transition-colors cursor-pointer"
+                className="p-2 sm:p-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-300 hover:text-white transition-colors cursor-pointer"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
               </button>
@@ -292,16 +292,20 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                 <button
                   onClick={handleDeleteServer}
                   title="移除节点"
-                  className="p-1.5 rounded-lg bg-white/[0.04] hover:bg-rose-500/15 border border-white/[0.08] hover:border-rose-500/30 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+                  className="p-2 sm:p-1.5 rounded-lg bg-white/[0.04] hover:bg-rose-500/15 border border-white/[0.08] hover:border-rose-500/30 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>
           </div>
+        </div>
+      </div>
 
-          {/* Workspace Tabs */}
-          <nav className="flex items-center gap-1 overflow-x-auto -mb-px">
+      {/* Persistent Workspace Tabs */}
+      <header className="sticky top-12 lg:top-0 z-20 bg-[#090b10]/95 backdrop-blur-md border-b border-white/[0.06]">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6">
+          <nav className="flex items-center gap-0.5 sm:gap-1 overflow-x-auto no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0 -mb-px">
             {TABS.map((t) => {
               const Icon = t.icon;
               const isActive = activeTab === t.id;
@@ -309,7 +313,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                 <button
                   key={t.id}
                   onClick={() => switchTab(t.id)}
-                  className={`flex items-center gap-1.5 px-3.5 py-2.5 text-xs font-medium border-b-2 whitespace-nowrap transition-colors cursor-pointer ${
+                  className={`flex items-center gap-1.5 px-3 sm:px-3.5 py-2.5 text-xs font-medium border-b-2 whitespace-nowrap transition-colors cursor-pointer shrink-0 ${
                     isActive
                       ? 'border-sky-400 text-sky-300'
                       : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-white/15'
@@ -333,7 +337,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
       </header>
 
       {/* Main Workspace Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-6">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-4 sm:py-6">
         {!snapshot.online && activeTab !== 'nodequality' ? (
           <div className="bg-rose-500/10 border border-rose-500/25 rounded-2xl p-6 text-sm text-rose-200">
             <div className="font-semibold mb-1">当前无法连接到该服务器</div>
@@ -394,8 +398,8 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
 
       {/* Edit Node Metadata Modal */}
       {editingMeta && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0f131b] border border-white/10 rounded-2xl w-full max-w-md p-6 shadow-2xl">
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-[#0f131b] border border-white/10 rounded-2xl w-full max-w-md max-h-[90dvh] overflow-y-auto p-4 sm:p-6 shadow-2xl">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-semibold text-white">编辑节点信息与备注</h3>
               <button

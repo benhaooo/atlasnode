@@ -582,7 +582,7 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
           <div className="space-y-1.5">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs font-semibold text-white">当前节点监测模式</span>
-              <div className="inline-flex items-center bg-[#090b10] border border-white/[0.08] rounded-xl p-0.5 text-[11px]">
+              <div className="inline-flex flex-wrap items-center bg-[#090b10] border border-white/[0.08] rounded-xl p-0.5 text-[11px]">
                 <button
                   type="button"
                   disabled={savingMode}
@@ -737,7 +737,7 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
 
       {/* On-Demand 20-Shot Burst Stability Result Panel */}
       {burstResults && (
-        <section className="bg-[#0f131b] border border-sky-400/30 rounded-2xl p-5 space-y-3.5">
+        <section className="bg-[#0f131b] border border-sky-400/30 rounded-2xl p-4 sm:p-5 space-y-3.5">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Zap className="w-4 h-4 text-sky-400" />
@@ -833,16 +833,18 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
 
       {/* TIER 1: Target Stability Scorecards */}
       <section className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-            <Activity className="w-3.5 h-3.5 text-sky-400" />
-            {loadingMon && !monitor
-              ? '多线路稳定性监控（正在加载探针数据...）'
-              : `多线路稳定性监控 (${monitor?.targets.length || 0} 条探针 · 点击卡片切换下方 Smokeping 曲线)`}
+            <Activity className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+            <span>
+              {loadingMon && !monitor
+                ? '多线路稳定性监控（正在加载探针数据...）'
+                : `多线路稳定性监控 (${monitor?.targets.length || 0} 条探针 · 点击卡片切换曲线)`}
+            </span>
           </h2>
           <button
             onClick={() => loadMonitor(range)}
-            className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer"
+            className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer shrink-0"
           >
             <RefreshCw className={`w-3 h-3 ${loadingMon ? 'animate-spin text-sky-400' : ''}`} />
             <span>刷新</span>
@@ -986,7 +988,7 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
       </section>
 
       {/* TIER 2: Smokeping Latency + Jitter Band + Loss + Peak Hours SVG Chart */}
-      <section className="bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 space-y-4">
+      <section className="bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-sm font-semibold text-white flex items-center gap-2">
@@ -1038,10 +1040,10 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
           </div>
         ) : (
           <div className="space-y-2">
-            <div className="bg-[#090b10] rounded-xl border border-white/[0.05] p-3.5">
+            <div className="bg-[#090b10] rounded-xl border border-white/[0.05] p-2.5 sm:p-3.5">
               <div className="flex items-stretch">
                 {/* Crisp HTML Y-Axis Labels (never stretched) */}
-                <div className="w-12 shrink-0 pr-2.5 py-1 flex flex-col justify-between text-right font-mono text-[10px] text-slate-500 leading-none select-none">
+                <div className="w-10 sm:w-12 shrink-0 pr-2 sm:pr-2.5 py-1 flex flex-col justify-between text-right font-mono text-[10px] text-slate-500 leading-none select-none">
                   {[0, 0.25, 0.5, 0.75, 1].map((ratio) => (
                     <span key={ratio}>{Math.round(chartData.maxMs * (1 - ratio))}ms</span>
                   ))}
@@ -1140,10 +1142,14 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
               </div>
 
               {/* Crisp HTML X-Axis Timestamps (never stretched) */}
-              <div className="pl-12 pt-2.5 flex items-center justify-between font-mono text-[10px] text-slate-500 leading-none select-none">
-                {[0, 0.25, 0.5, 0.75, 1].map((r) => {
+              <div className="pl-10 sm:pl-12 pt-2.5 flex items-center justify-between font-mono text-[10px] text-slate-500 leading-none select-none">
+                {[0, 0.25, 0.5, 0.75, 1].map((r, i) => {
                   const ts = chartData.minTs + (chartData.maxTs - chartData.minTs) * r;
-                  return <span key={r}>{formatClock(ts, range)}</span>;
+                  return (
+                    <span key={r} className={i === 1 || i === 3 ? 'hidden sm:inline' : ''}>
+                      {formatClock(ts, range)}
+                    </span>
+                  );
                 })}
               </div>
             </div>
@@ -1168,8 +1174,8 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
       {/* TIER 2.5: Live Proxy/Service Kernel TCP Health + Single-Thread Throughput & Route Detour */}
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Left (6 cols): Zero-Traffic Live Kernel TCP Health (`ss -ti`) */}
-        <div className="lg:col-span-6 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 space-y-4">
-          <div className="flex items-center justify-between gap-2">
+        <div className="lg:col-span-6 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h3 className="text-xs font-semibold uppercase tracking-wider text-emerald-300 flex items-center gap-1.5">
                 <Radio className="w-3.5 h-3.5" />
@@ -1248,7 +1254,7 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
                   {liveTcp.topPeers.slice(0, 6).map((peer, idx) => (
                     <div
                       key={idx}
-                      className="bg-[#090b10] border border-white/[0.04] rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-2 text-[11px] font-mono"
+                      className="bg-[#090b10] border border-white/[0.04] rounded-lg px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[11px] font-mono"
                     >
                       <span className="text-slate-300 truncate">
                         :{peer.localPort} ↔ {peer.remoteAddr}
@@ -1271,7 +1277,7 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
         </div>
 
         {/* Right (6 cols): Single-Thread Throughput & Route Detour Checks */}
-        <div className="lg:col-span-6 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 space-y-4">
+        <div className="lg:col-span-6 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h3 className="text-xs font-semibold uppercase tracking-wider text-sky-300 flex items-center gap-1.5">
@@ -1364,8 +1370,8 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
                         : 'bg-[#090b10] border-white/[0.05]'
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5">
+                    <div className="flex flex-wrap items-center justify-between gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <span className="font-medium text-white">{r.targetName}</span>
                         <span className="text-[10px] font-mono text-sky-300">{r.hopsCount} 跳</span>
                         {r.isPeak && (
@@ -1401,7 +1407,7 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
       {/* TIER 3: Host Network Profile & Kernel TCP Stack */}
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Left (5 cols): Kernel TCP Stack & Socket States */}
-        <div className="lg:col-span-5 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 space-y-4">
+        <div className="lg:col-span-5 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
               <Network className="w-3.5 h-3.5 text-sky-400" />
@@ -1502,7 +1508,7 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
         </div>
 
         {/* Right (7 cols): NIC Interfaces & Drop Counters */}
-        <div className="lg:col-span-7 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 space-y-3.5">
+        <div className="lg:col-span-7 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-3.5">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
             <Wifi className="w-3.5 h-3.5 text-emerald-400" />
             网卡接口、MTU 与丢包计数 ({profile?.interfaces.length || 0})
@@ -1582,16 +1588,16 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
 
       {/* Edit Probe Targets Modal (Preset Library + Smart Quick Add + Current List) */}
       {editingTargets && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0f131b] border border-white/10 rounded-2xl w-full max-w-3xl max-h-[88vh] flex flex-col shadow-2xl overflow-hidden">
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-2.5 sm:p-4">
+          <div className="bg-[#0f131b] border border-white/10 rounded-2xl w-full max-w-3xl max-h-[92dvh] sm:max-h-[88vh] flex flex-col shadow-2xl overflow-hidden">
             {/* Header + Tabs */}
-            <div className="px-5 py-4 border-b border-white/[0.06] flex flex-wrap items-center justify-between gap-3 shrink-0">
-              <div className="flex items-center gap-3 flex-wrap">
+            <div className="px-4 sm:px-5 py-3.5 sm:py-4 border-b border-white/[0.06] flex flex-wrap items-center justify-between gap-2.5 shrink-0">
+              <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap min-w-0">
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
                   <Globe className="w-4 h-4 text-sky-400" />
                   <span>探测目标库</span>
                 </div>
-                <div className="flex items-center bg-[#090b10] border border-white/[0.07] rounded-lg p-0.5 text-[11px]">
+                <div className="flex flex-wrap items-center bg-[#090b10] border border-white/[0.07] rounded-lg p-0.5 text-[11px]">
                   <button
                     type="button"
                     onClick={() => setModalTab('presets')}
@@ -1629,7 +1635,7 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
             </div>
 
             {/* Body */}
-            <div className="p-5 overflow-y-auto flex-1 space-y-5 text-xs">
+            <div className="p-4 sm:p-5 overflow-y-auto flex-1 space-y-5 text-xs">
               {modalTab === 'presets' && (
                 <>
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1877,7 +1883,7 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
                   {targetsDraft.map((t, idx) => (
                     <div
                       key={t.id || idx}
-                      className="bg-[#090b10] border border-white/[0.07] rounded-xl p-3 grid grid-cols-12 gap-2 items-center"
+                      className="bg-[#090b10] border border-white/[0.07] rounded-xl p-3 grid grid-cols-6 sm:grid-cols-12 gap-2 items-center"
                     >
                       <input
                         className="col-span-3 bg-[#0f131b] border border-white/10 rounded-lg px-2 py-1.5 text-white focus:border-sky-400 focus:outline-none"
@@ -1958,7 +1964,7 @@ export const NetworkTab: React.FC<NetworkTabProps> = ({ snapshot }) => {
             </div>
 
             {/* Sticky Footer */}
-            <div className="px-5 py-3.5 border-t border-white/[0.06] bg-[#0b0e15] flex items-center justify-between gap-2 shrink-0 text-xs">
+            <div className="px-4 sm:px-5 py-3.5 border-t border-white/[0.06] bg-[#0b0e15] flex flex-wrap items-center justify-between gap-2 shrink-0 text-xs">
               <span className="text-slate-400">
                 当前已选 <b className="text-sky-300 font-mono">{targetsDraft.filter((t) => t.enabled).length}</b> 条探针（每 60s 持续采集）
               </span>

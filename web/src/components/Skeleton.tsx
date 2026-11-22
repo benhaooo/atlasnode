@@ -285,9 +285,9 @@ export const NetworkLiveTcpSkeleton: React.FC = () => (
 );
 
 export const ServerDetailSkeleton: React.FC = () => (
-  <div className="min-h-screen flex flex-col">
-    <header className="sticky top-0 z-20 bg-[#090b10]/90 backdrop-blur-md border-b border-white/[0.06]">
-      <div className="max-w-7xl mx-auto px-6 pt-4 pb-0">
+  <div className="min-h-dvh flex flex-col">
+    <header className="bg-[#090b10]/90 backdrop-blur-md border-b border-white/[0.06]">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-3 sm:pt-4 pb-0">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3.5">
           <div className="space-y-2">
             <div className="flex items-center gap-2.5">
@@ -295,7 +295,7 @@ export const ServerDetailSkeleton: React.FC = () => (
               <Sk className="h-5 w-36" />
               <Sk className="h-4 w-24 bg-white/[0.05]" />
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Sk className="h-3 w-28 bg-white/[0.04]" />
               <Sk className="h-3 w-28 bg-white/[0.04]" />
               <Sk className="h-3 w-36 bg-white/[0.04]" />
@@ -307,14 +307,14 @@ export const ServerDetailSkeleton: React.FC = () => (
             <Sk className="h-8 w-8 rounded-lg bg-white/[0.05]" />
           </div>
         </div>
-        <div className="flex items-center gap-2 pb-2.5">
+        <div className="flex items-center gap-2 pb-2.5 overflow-hidden">
           {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
-            <Sk key={i} className="h-6 w-20 rounded-md bg-white/[0.05]" />
+            <Sk key={i} className="h-6 w-20 shrink-0 rounded-md bg-white/[0.05]" />
           ))}
         </div>
       </div>
     </header>
-    <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-6">
+    <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-4 sm:py-6">
       <NodeQualitySkeleton />
     </main>
   </div>

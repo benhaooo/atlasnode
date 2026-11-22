@@ -119,18 +119,18 @@ export const KeysTab: React.FC<KeysTabProps> = ({ snapshot }) => {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
       {/* Primary (7 cols): Authorized Keys List */}
-      <section className="lg:col-span-7 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 space-y-4">
-        <div className="flex items-center justify-between gap-2">
-          <div>
+      <section className="lg:col-span-7 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0">
             <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-              <KeyRound className="w-4 h-4 text-sky-400" />
+              <KeyRound className="w-4 h-4 text-sky-400 shrink-0" />
               已授权 SSH 公钥 ({info?.keys.length || 0})
             </h2>
-            <div className="text-[11px] font-mono text-slate-500 mt-0.5">
+            <div className="text-[11px] font-mono text-slate-500 mt-0.5 truncate">
               {info?.targetFile || '~/.ssh/authorized_keys'}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={() => setAdding(!adding)}
               className="flex items-center gap-1 text-xs bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold px-3 py-1.5 rounded-xl cursor-pointer"
@@ -234,11 +234,11 @@ export const KeysTab: React.FC<KeysTabProps> = ({ snapshot }) => {
           {info?.keys.map((k) => (
             <div
               key={k.index}
-              className="bg-[#090b10] border border-white/[0.06] rounded-xl p-3.5 flex items-start justify-between gap-3"
+              className="bg-[#090b10] border border-white/[0.06] rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-start justify-between gap-2.5 sm:gap-3"
             >
               <div className="min-w-0 space-y-1">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-xs font-semibold text-white">
+                  <span className="text-xs font-semibold text-white break-all">
                     {k.comment || '(无备注公钥)'}
                   </span>
                   <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/[0.06] text-slate-300">
@@ -255,12 +255,12 @@ export const KeysTab: React.FC<KeysTabProps> = ({ snapshot }) => {
                     {k.fingerprint}
                   </div>
                 )}
-                <div className="text-[10px] font-mono text-slate-600 truncate max-w-md">
+                <div className="text-[10px] font-mono text-slate-600 truncate max-w-full sm:max-w-md">
                   {k.key.slice(0, 28)}...{k.key.slice(-14)}
                 </div>
               </div>
 
-              <div className="flex items-center gap-1 shrink-0">
+              <div className="flex items-center gap-1 shrink-0 self-end sm:self-auto">
                 <button
                   onClick={() => handleSyncKeyToAll(k.index, k.rawLine)}
                   disabled={syncingIdx !== null}
@@ -303,7 +303,7 @@ export const KeysTab: React.FC<KeysTabProps> = ({ snapshot }) => {
 
       {/* Secondary (5 cols): SSHD Security Posture & Recent Logins */}
       <div className="lg:col-span-5 space-y-5">
-        <section className="bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 space-y-3">
+        <section className="bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-3">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
             <Shield className="w-3.5 h-3.5 text-emerald-400" />
             SSHD 安全策略
@@ -350,7 +350,7 @@ export const KeysTab: React.FC<KeysTabProps> = ({ snapshot }) => {
           )}
         </section>
 
-        <section className="bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 space-y-3">
+        <section className="bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-3">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
             <Clock className="w-3.5 h-3.5" />
             最近登录记录

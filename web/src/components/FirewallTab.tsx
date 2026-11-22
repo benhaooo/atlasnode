@@ -167,7 +167,7 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
     <div className="space-y-5">
       {/* TIER 1: Security Posture Banner */}
       <section
-        className={`rounded-2xl p-5 border flex flex-col md:flex-row md:items-center justify-between gap-4 ${
+        className={`rounded-2xl p-4 sm:p-5 border flex flex-col md:flex-row md:items-center justify-between gap-4 ${
           data?.active
             ? 'bg-emerald-500/[0.05] border-emerald-500/25'
             : 'bg-amber-500/[0.06] border-amber-400/25'
@@ -238,10 +238,10 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
       {/* TIER 2: Exposure-First Listening Ports */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Publicly Exposed Ports (High Weight) */}
-        <section className="lg:col-span-7 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 space-y-3">
-          <div className="flex items-center justify-between">
+        <section className="lg:col-span-7 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-1.5">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
-              <Globe className="w-3.5 h-3.5" />
+              <Globe className="w-3.5 h-3.5 shrink-0" />
               公网暴露端口 (0.0.0.0 / ::) · {publicPorts.length}
             </h3>
             <span className="text-[10px] text-slate-500">外部网络可直接触达（受云安全组与防火墙约束）</span>
@@ -251,10 +251,10 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
             {publicPorts.map((p, idx) => (
               <div
                 key={`${p.proto}-${p.port}-${idx}`}
-                className="flex items-center justify-between bg-[#090b10] border border-white/[0.06] rounded-xl px-3.5 py-2.5 text-xs"
+                className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 bg-[#090b10] border border-white/[0.06] rounded-xl px-3.5 py-2.5 text-xs"
               >
-                <div className="flex items-center gap-3 min-w-0">
-                  <span className="font-mono font-semibold text-amber-300 w-16 shrink-0">
+                <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+                  <span className="font-mono font-semibold text-amber-300 w-14 sm:w-16 shrink-0">
                     :{p.port}
                   </span>
                   <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-white/[0.05] text-slate-400">
@@ -332,7 +332,7 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
         </section>
 
         {/* Firewall Rules Management (5 cols): supports both UFW & nftables */}
-        <section className="lg:col-span-5 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 space-y-3.5">
+        <section className="lg:col-span-5 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-3.5">
           {data?.engine === 'nftables' || (data?.nftRules && data.nftRules.length > 0 && data.engine !== 'ufw') ? (
             <>
               <div className="flex items-center justify-between gap-2">
@@ -386,9 +386,9 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
                     onChange={(e) => setNftForm({ ...nftForm, comment: e.target.value })}
                     className="w-full bg-[#0f131b] border border-white/10 rounded-lg px-2.5 py-1.5 text-white focus:border-sky-400 focus:outline-none"
                   />
-                  <div className="flex items-center justify-between text-[10px] text-slate-500">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-500">
                     <span>自动插入至链头部，并持久化到重启脚本</span>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 ml-auto">
                       <button
                         type="button"
                         onClick={() => setAddingNftRule(false)}
@@ -495,7 +495,7 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
                   onSubmit={handleAddRule}
                   className="bg-[#090b10] border border-white/10 rounded-xl p-3.5 space-y-2.5 text-xs"
                 >
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <input
                       required
                       placeholder="端口 (如 8080)"
@@ -522,7 +522,7 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
                       <option value="limit">LIMIT</option>
                     </select>
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <input
                       placeholder="来源 (any 或 CIDR)"
                       value={ruleForm.from}

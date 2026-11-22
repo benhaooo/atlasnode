@@ -117,10 +117,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-[#0f131b] border border-white/10 rounded-2xl w-full max-w-2xl max-h-[88vh] flex flex-col shadow-2xl overflow-hidden">
-        <div className="px-6 py-4 border-b border-white/[0.06] flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-4">
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+      <div className="bg-[#0f131b] border border-white/10 rounded-2xl w-full max-w-2xl max-h-[92dvh] sm:max-h-[88vh] flex flex-col shadow-2xl overflow-hidden">
+        <div className="px-4 sm:px-6 py-3.5 sm:py-4 border-b border-white/[0.06] flex items-center justify-between gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2.5 sm:gap-4 min-w-0">
             <h3 className="text-sm font-semibold text-white">管控中枢设置</h3>
             <div className="flex items-center bg-[#090b10] border border-white/[0.07] rounded-lg p-0.5 text-[11px]">
               <button
@@ -143,22 +143,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
               </button>
             </div>
           </div>
-          <button onClick={onClose} className="text-slate-400 hover:text-white cursor-pointer">
+          <button onClick={onClose} className="text-slate-400 hover:text-white cursor-pointer shrink-0">
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="p-6 overflow-y-auto space-y-6 text-xs">
+        <div className="p-4 sm:p-6 overflow-y-auto space-y-6 text-xs">
           {tab === 'general' ? (
             <>
               {/* Runtime & Pool Diagnostics */}
               {runtime && (
                 <div className="bg-[#090b10] border border-white/[0.07] rounded-xl p-3.5 space-y-2">
                   <div className="font-semibold text-slate-200 flex items-center gap-1.5">
-                    <Activity className="w-3.5 h-3.5 text-emerald-400" />
+                    <Activity className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                     控制端运行态（ssh2 连接池 + SQLite 时序库）
                   </div>
-                  <div className="grid grid-cols-3 gap-2 font-mono text-[11px]">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 font-mono text-[11px]">
                     <div>
                       <span className="text-slate-500">SSH 复用连接: </span>
                       <span className="text-sky-300">{runtime.pool.activeConnections}</span>
@@ -179,7 +179,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
 
               {/* Manager SSH Public Key */}
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-semibold text-slate-200 flex items-center gap-1.5">
                     <KeyRound className="w-3.5 h-3.5 text-sky-400" />
                     管控机专用 SSH 公钥
@@ -206,7 +206,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                   <Lock className="w-3.5 h-3.5 text-amber-400" />
                   修改控制台访问密钥
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <input
                     type="password"
                     required
@@ -257,7 +257,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
           ) : (
             <form onSubmit={handleSaveAlerts} className="space-y-5">
               {/* Master Toggle */}
-              <div className="bg-[#090b10] border border-white/[0.07] rounded-xl p-4 flex items-center justify-between gap-4">
+              <div className="bg-[#090b10] border border-white/[0.07] rounded-xl p-3.5 sm:p-4 flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <div className="font-semibold text-white">启用后台主动告警引擎</div>
                   <div className="text-[11px] text-slate-400 mt-0.5">
@@ -476,7 +476,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                 </div>
               )}
 
-              <div className="flex items-center justify-between gap-2 pt-1">
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                 <button
                   type="button"
                   onClick={handleTestAlerts}
@@ -503,7 +503,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                     {alertHistory.slice(0, 15).map((ev) => (
                       <div
                         key={ev.id}
-                        className="bg-[#090b10] border border-white/[0.05] rounded-lg px-3 py-2 flex items-center justify-between gap-2 text-[11px]"
+                        className="bg-[#090b10] border border-white/[0.05] rounded-lg px-3 py-2 flex flex-wrap items-center justify-between gap-1.5 text-[11px]"
                       >
                         <div className="min-w-0">
                           <span className="font-mono text-amber-300 mr-2">[{ev.serverName}]</span>

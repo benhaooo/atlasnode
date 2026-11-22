@@ -6,7 +6,13 @@
     --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   }
 
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
   body {
+    -webkit-tap-highlight-color: transparent;
     font-family: var(--font-sans);
     background-color: #090b10;
     color: #e8ecf4;
@@ -36,4 +42,21 @@
 }
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(148, 163, 184, 0.35);
+}
+
+/* Hide scrollbars on horizontally scrollable strips (tabs, chips) */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Touch devices: avoid iOS auto-zoom on focus (requires >= 16px) */
+@media (pointer: coarse) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
 }

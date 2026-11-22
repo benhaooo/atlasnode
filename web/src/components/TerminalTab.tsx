@@ -19,6 +19,18 @@ const QUICK_CMDS = [
   { label: 'uptime', cmd: 'uptime\n' },
 ];
 
+const MOBILE_KEYS = [
+  { label: 'ESC', data: '\x1b' },
+  { label: 'TAB', data: '\t' },
+  { label: 'Ctrl+C', data: '\x03' },
+  { label: 'Ctrl+D', data: '\x04' },
+  { label: 'Ctrl+L', data: '\x0c' },
+  { label: '↑', data: '\x1b[A' },
+  { label: '↓', data: '\x1b[B' },
+  { label: '←', data: '\x1b[D' },
+  { label: '→', data: '\x1b[C' },
+];
+
 export const TerminalTab: React.FC<TerminalTabProps> = ({
   snapshot,
   containerName,
@@ -36,9 +48,10 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({
     const el = containerRef.current;
     if (!el) return;
 
+    const isNarrow = window.innerWidth < 640;
     const term = new XTerm({
       cursorBlink: true,
-      fontSize: 13,
+      fontSize: isNarrow ? 11 : 13,
       fontFamily: "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
       theme: {
         background: '#07090d',
@@ -148,7 +161,7 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({
   return (
     <div className="bg-[#0c0f16] border border-white/[0.08] rounded-2xl overflow-hidden flex flex-col">
       {/* Terminal Toolbar */}
-      <div className="px-4 py-2.5 bg-[#0f131b] border-b border-white/[0.06] flex flex-wrap items-center justify-between gap-2">
+      <div className="px-3 sm:px-4 py-2.5 bg-[#0f131b] border-b border-white/[0.06] flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2.5 text-xs">
           {containerName ? (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-500/15 border border-sky-400/30 text-sky-300 font-mono">
@@ -225,7 +238,22 @@ export const TerminalTab: React.FC<TerminalTabProps> = ({
 
       {/* XTerm Canvas */}
       <div className="p-2 bg-[#07090d]">
-        <div ref={containerRef} className="w-full h-[540px]" />
+        <div ref={containerRef} className="w-full h-[55dvh] min-h-[300px] max-h-[540px] sm:h-[540px]" />
+      </div>
+
+      {/* Mobile Touch Key Helper Bar (Esc / Tab / Ctrl / Arrows) */}
+      <div className="lg:hidden px-2.5 py-2 bg-[#0f131b] border-t border-white/[0.06] flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+        {MOBILE_KEYS.map((k) => (
+          <button
+            key={k.label}
+            type="button"
+            disabled={status !== 'connected'}
+            onClick={() => sendQuickCmd(k.data)}
+            className="shrink-0 text-[11px] font-mono bg-white/[0.06] active:bg-sky-500/25 disabled:opacity-40 border border-white/[0.08] text-slate-200 px-2.5 py-1.5 rounded-lg cursor-pointer"
+          >
+            {k.label}
+          </button>
+        ))}
       </div>
     </div>
   );

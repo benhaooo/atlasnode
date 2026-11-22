@@ -279,7 +279,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
       {/* Reverse Proxy Domains & TLS Certificate Topology (shown only when routes exist) */}
       {proxyRoutes.length > 0 && (
         <section className="space-y-2.5">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-xs font-semibold uppercase tracking-wider text-emerald-300 flex items-center gap-1.5">
               <Globe className="w-3.5 h-3.5" />
               <span>反代域名与证书拓扑 ({proxyRoutes.length})</span>
@@ -430,7 +430,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                 key={group.project}
                 className="bg-[#0f131b] border border-white/[0.07] rounded-2xl overflow-hidden"
               >
-                <div className="px-4 py-2.5 bg-white/[0.02] border-b border-white/[0.06] flex items-center justify-between gap-2">
+                <div className="px-4 py-2.5 bg-white/[0.02] border-b border-white/[0.06] flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <span className="text-xs font-semibold text-slate-200 truncate">
                       {group.project}
@@ -490,7 +490,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                             <span className="text-xs font-semibold text-white font-mono">
                               {c.name}
                             </span>
-                            <span className="text-[11px] text-slate-500 truncate max-w-md font-mono">
+                            <span className="text-[11px] text-slate-500 truncate max-w-full sm:max-w-md font-mono">
                               {c.image}
                             </span>
                             {c.health && (
@@ -535,7 +535,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                         </div>
 
                         {/* Live Container Stats + Actions */}
-                        <div className="flex items-center justify-between lg:justify-end gap-4 pl-4 lg:pl-0 shrink-0">
+                        <div className="flex flex-wrap items-center justify-between lg:justify-end gap-2 sm:gap-4 pl-4 lg:pl-0 shrink-0">
                           {isRunning && (c.cpuPercent !== undefined || c.memUsage) && (
                             <div className="flex items-center gap-3 text-[11px] font-mono text-slate-400">
                               <span className="flex items-center gap-1">
@@ -661,18 +661,18 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
 
       {/* Logs Modal */}
       {logsModal && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0c0f16] border border-white/10 rounded-2xl w-full max-w-4xl max-h-[82vh] flex flex-col shadow-2xl overflow-hidden">
-            <div className="px-5 py-3.5 border-b border-white/[0.07] flex items-center justify-between">
-              <span className="text-xs font-semibold text-white font-mono">{logsModal.title}</span>
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-2.5 sm:p-4">
+          <div className="bg-[#0c0f16] border border-white/10 rounded-2xl w-full max-w-4xl max-h-[88dvh] sm:max-h-[82vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="px-4 sm:px-5 py-3.5 border-b border-white/[0.07] flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-white font-mono truncate">{logsModal.title}</span>
               <button
                 onClick={() => setLogsModal(null)}
-                className="text-slate-400 hover:text-white cursor-pointer"
+                className="text-slate-400 hover:text-white cursor-pointer shrink-0"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="flex-1 overflow-auto p-4 bg-[#07090d]">
+            <div className="flex-1 overflow-auto p-3.5 sm:p-4 bg-[#07090d]">
               {logsModal.loading ? (
                 <div className="flex items-center justify-center py-12 text-xs text-slate-400 gap-2">
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -690,9 +690,9 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
 
       {/* Compose YAML Inline Editor Modal */}
       {composeModal && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0c0f16] border border-white/10 rounded-2xl w-full max-w-4xl h-[82vh] flex flex-col shadow-2xl overflow-hidden">
-            <div className="px-5 py-3.5 border-b border-white/[0.07] flex items-center justify-between gap-2">
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-2.5 sm:p-4">
+          <div className="bg-[#0c0f16] border border-white/10 rounded-2xl w-full max-w-4xl h-[88dvh] sm:h-[82vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="px-4 sm:px-5 py-3.5 border-b border-white/[0.07] flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0">
                 <div className="text-xs font-semibold text-white font-mono truncate">
                   {composeModal.project} · {composeModal.path || composeModal.dir}
@@ -729,7 +729,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
             </div>
 
             {composeModal.msg && (
-              <div className="px-5 py-2 text-xs bg-sky-500/10 border-b border-sky-500/20 text-sky-200">
+              <div className="px-4 sm:px-5 py-2 text-xs bg-sky-500/10 border-b border-sky-500/20 text-sky-200">
                 {composeModal.msg}
               </div>
             )}
@@ -747,7 +747,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                     setComposeModal((prev) => (prev ? { ...prev, content: e.target.value } : prev))
                   }
                   spellCheck={false}
-                  className="flex-1 w-full h-full bg-[#07090d] text-slate-200 font-mono text-xs leading-relaxed p-4 focus:outline-none resize-none"
+                  className="flex-1 w-full h-full bg-[#07090d] text-slate-200 font-mono text-xs leading-relaxed p-3.5 sm:p-4 focus:outline-none resize-none"
                 />
               )}
             </div>
@@ -757,24 +757,24 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
 
       {/* Compose Streaming Output Modal */}
       {streamModal && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0c0f16] border border-white/10 rounded-2xl w-full max-w-4xl max-h-[82vh] flex flex-col shadow-2xl overflow-hidden">
-            <div className="px-5 py-3.5 border-b border-white/[0.07] flex items-center justify-between">
-              <div className="flex items-center gap-2 text-xs font-semibold text-white font-mono">
-                {streamModal.running && <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-400" />}
-                <span>{streamModal.title}</span>
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-2.5 sm:p-4">
+          <div className="bg-[#0c0f16] border border-white/10 rounded-2xl w-full max-w-4xl max-h-[88dvh] sm:max-h-[82vh] flex flex-col shadow-2xl overflow-hidden">
+            <div className="px-4 sm:px-5 py-3.5 border-b border-white/[0.07] flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-semibold text-white font-mono min-w-0">
+                {streamModal.running && <Loader2 className="w-3.5 h-3.5 animate-spin text-sky-400 shrink-0" />}
+                <span className="truncate">{streamModal.title}</span>
               </div>
               <button
                 onClick={() => setStreamModal(null)}
                 disabled={streamModal.running}
-                className="text-slate-400 hover:text-white cursor-pointer disabled:opacity-30"
+                className="text-slate-400 hover:text-white cursor-pointer disabled:opacity-30 shrink-0"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
             <pre
               ref={streamPreRef}
-              className="flex-1 overflow-auto p-4 bg-[#07090d] text-[11px] leading-relaxed font-mono text-slate-200 whitespace-pre-wrap break-all"
+              className="flex-1 overflow-auto p-3.5 sm:p-4 bg-[#07090d] text-[11px] leading-relaxed font-mono text-slate-200 whitespace-pre-wrap break-all"
             >
               {streamModal.output}
             </pre>

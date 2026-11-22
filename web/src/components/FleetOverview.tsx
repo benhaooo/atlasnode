@@ -102,18 +102,18 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-6 py-7 space-y-6">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5 sm:py-7 space-y-5 sm:space-y-6">
       {/* Header + Compact Signal Ribbon */}
       <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight text-white">服务器态势总览</h1>
+          <h1 className="text-lg sm:text-xl font-semibold tracking-tight text-white">服务器态势总览</h1>
           <p className="text-xs text-slate-400 mt-1">
             一眼掌握每台节点的用途、运行服务、公网质量与实时健康状态
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-4 bg-[#0f131b] border border-white/[0.07] rounded-xl px-4 py-2 text-xs">
+          <div className="flex flex-wrap items-center gap-x-3 sm:gap-x-4 gap-y-1.5 bg-[#0f131b] border border-white/[0.07] rounded-xl px-3 sm:px-4 py-2 text-xs">
             <div className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-emerald-400" />
               <span className="text-slate-400">在线</span>
@@ -162,15 +162,15 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
               <button
                 key={i}
                 onClick={() => onSelectServer(a.serverId, a.tab)}
-                className={`flex items-center gap-2 text-xs px-2.5 py-1 rounded-lg border transition-colors cursor-pointer ${
+                className={`flex items-center gap-2 text-xs text-left max-w-full px-2.5 py-1.5 rounded-lg border transition-colors cursor-pointer ${
                   a.severity === 'danger'
                     ? 'bg-rose-500/10 border-rose-500/25 text-rose-300 hover:bg-rose-500/20'
                     : 'bg-amber-500/10 border-amber-500/20 text-amber-200 hover:bg-amber-500/20'
                 }`}
               >
-                <span className="font-mono font-semibold">{a.serverName}</span>
-                <span className="text-slate-300">{a.message}</span>
-                <ArrowUpRight className="w-3 h-3 opacity-70" />
+                <span className="font-mono font-semibold shrink-0">{a.serverName}</span>
+                <span className="text-slate-300 truncate">{a.message}</span>
+                <ArrowUpRight className="w-3 h-3 opacity-70 shrink-0" />
               </button>
             ))}
           </div>
@@ -204,9 +204,9 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
               <div
                 key={snap.server.id}
                 onClick={() => onSelectServer(snap.server.id, 'overview')}
-                className="group bg-[#0f131b] hover:bg-[#121722] border border-white/[0.07] hover:border-sky-400/30 rounded-2xl p-5 transition-all cursor-pointer"
+                className="group bg-[#0f131b] hover:bg-[#121722] border border-white/[0.07] hover:border-sky-400/30 rounded-2xl p-4 sm:p-5 transition-all cursor-pointer"
               >
-                <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-start">
+                <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 sm:gap-5 items-start">
                   {/* ZONE 1 (Primary): Identity, Role & Network Addresses */}
                   <div className="xl:col-span-4 space-y-3">
                     <div className="flex items-start justify-between gap-2">
@@ -300,7 +300,7 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
                   </div>
 
                   {/* ZONE 2 (Primary): What's Running Inside + Quick Access */}
-                  <div className="xl:col-span-5 xl:border-l xl:border-white/[0.06] xl:pl-5 space-y-3">
+                  <div className="xl:col-span-5 pt-3.5 border-t border-white/[0.06] xl:pt-0 xl:border-t-0 xl:border-l xl:border-white/[0.06] xl:pl-5 space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
                         里面运行着什么 · 快捷入口
@@ -360,7 +360,7 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
 
                     {/* Firewall & Exposure Summary Line */}
                     {snap.online && (
-                      <div className="flex items-center gap-3 text-[11px] pt-0.5">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] pt-0.5">
                         <span
                           className={`inline-flex items-center gap-1 ${
                             snap.firewallSummary.active ? 'text-emerald-400' : 'text-amber-400'
@@ -382,7 +382,7 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
                   </div>
 
                   {/* ZONE 3 (Secondary): Vitals & NodeQuality Verdict */}
-                  <div className="xl:col-span-3 xl:border-l xl:border-white/[0.06] xl:pl-5 space-y-3">
+                  <div className="xl:col-span-3 pt-3.5 border-t border-white/[0.06] xl:pt-0 xl:border-t-0 xl:border-l xl:border-white/[0.06] xl:pl-5 space-y-3">
                     {snap.online && m ? (
                       <>
                         <div className="space-y-2">

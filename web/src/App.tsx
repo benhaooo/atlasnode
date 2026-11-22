@@ -9,6 +9,9 @@ import { ServerDetail, type ServerTab } from './components/ServerDetail';
 import { AddServerModal } from './components/AddServerModal';
 import { SettingsModal } from './components/SettingsModal';
 import { ServerDetailSkeleton } from './components/Skeleton';
+import { BrandLogo } from './components/BrandLogo';
+import { Menu, RefreshCw } from 'lucide-react';
+import { serverFlag } from './utils';
 
 const VALID_SERVER_TABS: ReadonlySet<ServerTab> = new Set<ServerTab>([
   'overview',
@@ -83,6 +86,27 @@ export default function App() {
   const [initialTab, setInitialTab] = useState<ServerTab>(initialRoute.tab);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  // Close the mobile drawer on any route change (incl. browser back/forward)
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [viewMode, selectedId]);
+
+  // Lock background scroll while the mobile drawer is open
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [mobileNavOpen]);
+
+  // Scroll to top when switching between views / servers
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+  }, [viewMode, selectedId]);
 
   const applyRoute = useCallback((next: RouteState, replace = false) => {
     setViewMode(next.viewMode);
@@ -222,27 +246,95 @@ export default function App() {
       ? snapshots.find((s) => s.server.id === selectedId) || null
       : null;
 
+  const onlineCount = snapshots.filter((s) => s.online).length;
+  const mobileTitle =
+    viewMode === 'compare' ? '多节点横向对比' : viewMode === 'server' ? null : '节点全局总览';
+
   return (
-    <div className="min-h-screen bg-[#090b10] text-[#e8ecf4] flex">
+    <div className="min-h-dvh bg-[#090b10] text-[#e8ecf4] flex">
       <Sidebar
         snapshots={snapshots}
         selectedId={viewMode === 'server' ? selectedId : null}
         activeView={viewMode}
         loading={loadingFleet}
-        onSelectOverview={() =>
-          applyRoute({ viewMode: 'overview', selectedId: null, tab: 'overview' })
-        }
-        onSelectCompare={() =>
-          applyRoute({ viewMode: 'compare', selectedId: null, tab: 'overview' })
-        }
-        onSelectServer={(id) => handleSelectServer(id, 'overview')}
-        onAddServer={() => setShowAddModal(true)}
-        onOpenSettings={() => setShowSettings(true)}
+        mobileOpen={mobileNavOpen}
+        onCloseMobile={() => setMobileNavOpen(false)}
+        onSelectOverview={() => {
+          setMobileNavOpen(false);
+          applyRoute({ viewMode: 'overview', selectedId: null, tab: 'overview' });
+        }}
+        onSelectCompare={() => {
+          setMobileNavOpen(false);
+          applyRoute({ viewMode: 'compare', selectedId: null, tab: 'overview' });
+        }}
+        onSelectServer={(id) => {
+          setMobileNavOpen(false);
+          handleSelectServer(id, 'overview');
+        }}
+        onAddServer={() => {
+          setMobileNavOpen(false);
+          setShowAddModal(true);
+        }}
+        onOpenSettings={() => {
+          setMobileNavOpen(false);
+          setShowSettings(true);
+        }}
         onRefresh={() => fetchFleet(true)}
         onLogout={handleLogout}
       />
 
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0 overflow-x-clip">
+        {/* Mobile top bar (drawer trigger + current context) */}
+        <div className="lg:hidden sticky top-0 z-30 h-12 pl-1 pr-2 flex items-center gap-1 bg-[#0c0f16]/95 backdrop-blur-md border-b border-white/[0.06]">
+          <button
+            onClick={() => setMobileNavOpen(true)}
+            aria-label="打开节点菜单"
+            className="p-2.5 rounded-lg text-slate-300 active:bg-white/[0.08] cursor-pointer"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <div className="flex-1 min-w-0 flex items-center gap-2">
+            {activeSnapshot ? (
+              <>
+                <span
+                  className={`w-2 h-2 rounded-full shrink-0 ${
+                    activeSnapshot.online
+                      ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]'
+                      : 'bg-rose-500'
+                  }`}
+                />
+                <span className="text-sm leading-none shrink-0">
+                  {serverFlag(
+                    activeSnapshot.server.region,
+                    activeSnapshot.latestNodeQuality?.summary.ip.country,
+                    activeSnapshot.server.tags
+                  )}
+                </span>
+                <span className="text-sm font-semibold text-white truncate">
+                  {activeSnapshot.server.name}
+                </span>
+              </>
+            ) : (
+              <>
+                <BrandLogo className="w-6 h-6 shrink-0" />
+                <span className="text-sm font-semibold text-white truncate">
+                  {mobileTitle || 'AtlasNode'}
+                </span>
+              </>
+            )}
+          </div>
+          <span className="text-[10px] font-mono text-slate-500 shrink-0">
+            {onlineCount}/{snapshots.length}
+          </span>
+          <button
+            onClick={() => fetchFleet(true)}
+            aria-label="刷新全部节点状态"
+            className="p-2.5 rounded-lg text-slate-400 active:bg-white/[0.08] cursor-pointer"
+          >
+            <RefreshCw className={`w-4 h-4 ${loadingFleet ? 'animate-spin text-sky-400' : ''}`} />
+          </button>
+        </div>
+
         {activeSnapshot ? (
           <ServerDetail
             snapshot={activeSnapshot}

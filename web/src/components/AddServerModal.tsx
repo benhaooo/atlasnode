@@ -119,9 +119,9 @@ export const AddServerModal: React.FC<AddServerModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-[#0f131b] border border-white/10 rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden">
-        <div className="px-6 py-4 border-b border-white/[0.06] flex items-center justify-between">
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+      <div className="bg-[#0f131b] border border-white/10 rounded-2xl w-full max-w-xl max-h-[92dvh] flex flex-col shadow-2xl overflow-hidden">
+        <div className="px-4 sm:px-6 py-3.5 sm:py-4 border-b border-white/[0.06] flex items-center justify-between shrink-0">
           <h3 className="text-sm font-semibold text-white">添加或发现服务器</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-white cursor-pointer">
             <X className="w-4 h-4" />
@@ -129,7 +129,7 @@ export const AddServerModal: React.FC<AddServerModalProps> = ({
         </div>
 
         {/* Mode Switcher */}
-        <div className="px-6 pt-4 flex gap-2">
+        <div className="px-4 sm:px-6 pt-3.5 sm:pt-4 flex flex-wrap gap-2 shrink-0">
           <button
             onClick={() => setTab('tailscale')}
             className={`flex items-center gap-1.5 text-xs px-3.5 py-2 rounded-lg border transition-colors cursor-pointer ${
@@ -154,7 +154,7 @@ export const AddServerModal: React.FC<AddServerModalProps> = ({
           </button>
         </div>
 
-        <div className="p-6 max-h-[75vh] overflow-y-auto">
+        <div className="p-4 sm:p-6 overflow-y-auto flex-1">
           {tab === 'tailscale' ? (
             <div className="space-y-3">
               <div className="text-xs text-slate-400">
@@ -173,7 +173,7 @@ export const AddServerModal: React.FC<AddServerModalProps> = ({
                   {peers.map((p) => (
                     <div
                       key={p.id}
-                      className="flex items-center justify-between bg-[#090b10] border border-white/[0.07] rounded-xl px-4 py-3"
+                      className="flex flex-wrap items-center justify-between gap-2 bg-[#090b10] border border-white/[0.07] rounded-xl px-3.5 sm:px-4 py-3"
                     >
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
@@ -216,7 +216,7 @@ export const AddServerModal: React.FC<AddServerModalProps> = ({
             </div>
           ) : (
             <form onSubmit={handleSave} className="space-y-3.5 text-xs">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-slate-400 mb-1">服务器名称 *</label>
                   <input
@@ -238,8 +238,8 @@ export const AddServerModal: React.FC<AddServerModalProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-12 gap-3">
-                <div className="col-span-6">
+              <div className="grid grid-cols-2 sm:grid-cols-12 gap-3">
+                <div className="col-span-2 sm:col-span-6">
                   <label className="block text-slate-400 mb-1">SSH 主机地址 *</label>
                   <input
                     required
@@ -249,7 +249,7 @@ export const AddServerModal: React.FC<AddServerModalProps> = ({
                     className="w-full bg-[#090b10] border border-white/10 rounded-lg px-3 py-2 text-white font-mono focus:border-sky-400 focus:outline-none"
                   />
                 </div>
-                <div className="col-span-3">
+                <div className="col-span-1 sm:col-span-3">
                   <label className="block text-slate-400 mb-1">用户名</label>
                   <input
                     value={form.username}
@@ -257,7 +257,7 @@ export const AddServerModal: React.FC<AddServerModalProps> = ({
                     className="w-full bg-[#090b10] border border-white/10 rounded-lg px-3 py-2 text-white font-mono focus:border-sky-400 focus:outline-none"
                   />
                 </div>
-                <div className="col-span-3">
+                <div className="col-span-1 sm:col-span-3">
                   <label className="block text-slate-400 mb-1">端口</label>
                   <input
                     type="number"
@@ -268,7 +268,7 @@ export const AddServerModal: React.FC<AddServerModalProps> = ({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-slate-400 mb-1">公网 IP（展示用，可选）</label>
                   <input
@@ -335,7 +335,7 @@ export const AddServerModal: React.FC<AddServerModalProps> = ({
                 </div>
               )}
 
-              <div className="flex items-center justify-between pt-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
                 <button
                   type="button"
                   onClick={handleTest}

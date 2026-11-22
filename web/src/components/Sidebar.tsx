@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   GitCompareArrows,
   LayoutGrid,
@@ -9,6 +9,7 @@ import {
   Box,
   ShieldAlert,
   Wifi,
+  X,
 } from 'lucide-react';
 import type { ServerSnapshot } from '../types';
 import { serverFlag } from '../utils';
@@ -19,6 +20,8 @@ interface SidebarProps {
   selectedId: string | null;
   activeView: 'overview' | 'compare' | 'server';
   loading: boolean;
+  mobileOpen?: boolean;
+  onCloseMobile?: () => void;
   onSelectOverview: () => void;
   onSelectCompare: () => void;
   onSelectServer: (id: string) => void;
@@ -33,6 +36,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   selectedId,
   activeView,
   loading,
+  mobileOpen = false,
+  onCloseMobile,
   onSelectOverview,
   onSelectCompare,
   onSelectServer,
@@ -43,31 +48,65 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const onlineCount = snapshots.filter((s) => s.online).length;
 
-  return (
-    <aside className="w-64 shrink-0 bg-[#0c0f16] border-r border-white/[0.06] flex flex-col h-screen sticky top-0 select-none">
-      {/* Brand header */}
-      <div className="px-4 h-14 flex items-center justify-between border-b border-white/[0.06]">
-        <button
-          onClick={onSelectOverview}
-          className="flex items-center gap-2.5 text-left group cursor-pointer"
-        >
-          <BrandLogo className="w-7 h-7 shrink-0 group-hover:scale-105 transition-transform" />
-          <div>
-            <div className="text-sm font-semibold text-white tracking-tight leading-none">AtlasNode</div>
-            <div className="text-[10px] text-slate-500 mt-1 font-mono">
-              {onlineCount}/{snapshots.length} ONLINE
-            </div>
-          </div>
-        </button>
+  useEffect(() => {
+    if (!mobileOpen || !onCloseMobile) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCloseMobile();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [mobileOpen, onCloseMobile]);
 
-        <button
-          onClick={onRefresh}
-          title="刷新全部节点状态"
-          className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors cursor-pointer"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-sky-400' : ''}`} />
-        </button>
-      </div>
+  return (
+    <>
+      {/* Mobile Drawer Backdrop */}
+      {mobileOpen && (
+        <div
+          onClick={onCloseMobile}
+          aria-hidden="true"
+          className="fixed inset-0 z-40 bg-black/65 backdrop-blur-[2px] lg:hidden"
+        />
+      )}
+
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] h-dvh bg-[#0c0f16] border-r border-white/[0.06] flex flex-col select-none transition-transform duration-200 ease-out lg:static lg:z-auto lg:w-64 lg:max-w-none lg:shrink-0 lg:h-screen lg:sticky lg:top-0 lg:translate-x-0 ${
+          mobileOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'
+        }`}
+      >
+        {/* Brand header */}
+        <div className="px-4 h-14 flex items-center justify-between border-b border-white/[0.06]">
+          <button
+            onClick={onSelectOverview}
+            className="flex items-center gap-2.5 text-left group cursor-pointer"
+          >
+            <BrandLogo className="w-7 h-7 shrink-0 group-hover:scale-105 transition-transform" />
+            <div>
+              <div className="text-sm font-semibold text-white tracking-tight leading-none">AtlasNode</div>
+              <div className="text-[10px] text-slate-500 mt-1 font-mono">
+                {onlineCount}/{snapshots.length} ONLINE
+              </div>
+            </div>
+          </button>
+
+          <div className="flex items-center gap-1">
+            <button
+              onClick={onRefresh}
+              title="刷新全部节点状态"
+              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-sky-400' : ''}`} />
+            </button>
+            {onCloseMobile && (
+              <button
+                onClick={onCloseMobile}
+                aria-label="关闭菜单"
+                className="lg:hidden p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/[0.06] transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        </div>
 
       {/* Fleet Overview & Compare Links */}
       <div className="p-2.5 space-y-1">
@@ -230,6 +269,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <LogOut className="w-3.5 h-3.5" />
         </button>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 };

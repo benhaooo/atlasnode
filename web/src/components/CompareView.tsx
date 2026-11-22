@@ -47,11 +47,11 @@ export const CompareView: React.FC<CompareViewProps> = ({ snapshots, onSelectSer
     mesh?.matrix.find((c) => c.fromId === fromId && c.toId === toId);
 
   return (
-    <div className="max-w-7xl mx-auto px-6 py-7 space-y-6">
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5 sm:py-7 space-y-5 sm:space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight text-white">多节点横向对比</h1>
+          <h1 className="text-lg sm:text-xl font-semibold tracking-tight text-white">多节点横向对比</h1>
           <p className="text-xs text-slate-400 mt-1">
             一屏横向比较所有服务器的规格、IP 纯净度、流媒体解锁、三网线路与节点间互通延迟
           </p>
@@ -74,7 +74,7 @@ export const CompareView: React.FC<CompareViewProps> = ({ snapshots, onSelectSer
 
       {/* Part 1: NodeQuality Horizontal Comparison Matrix */}
       <section className="bg-[#0f131b] border border-white/[0.07] rounded-2xl overflow-hidden">
-        <div className="px-5 py-3.5 border-b border-white/[0.06] flex items-center justify-between">
+        <div className="px-4 sm:px-5 py-3.5 border-b border-white/[0.06] flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
             <Zap className="w-3.5 h-3.5 text-emerald-400" />
             节点质量与能力横向矩阵
@@ -87,10 +87,10 @@ export const CompareView: React.FC<CompareViewProps> = ({ snapshots, onSelectSer
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-xs">
+          <table className="w-full text-xs whitespace-nowrap">
             <thead>
               <tr className="text-[11px] text-slate-500 border-b border-white/[0.06] bg-white/[0.015] text-left">
-                <th className="py-3 px-4 font-medium">节点</th>
+                <th className="py-3 px-4 font-medium sticky left-0 z-10 bg-[#11151e]">节点</th>
                 <th className="py-3 px-3 font-medium">配置 / 负载</th>
                 <th className="py-3 px-3 font-medium">IP 归属 & 性质</th>
                 <th className="py-3 px-3 font-medium">风控 / 黑名单</th>
@@ -122,7 +122,7 @@ export const CompareView: React.FC<CompareViewProps> = ({ snapshots, onSelectSer
 
                 return (
                   <tr key={snap.server.id} className="hover:bg-white/[0.02]">
-                    <td className="py-3.5 px-4">
+                    <td className="py-3.5 px-4 sticky left-0 z-10 bg-[#0f131b]">
                       <div className="flex items-center gap-2">
                         <span
                           className={`w-2 h-2 rounded-full shrink-0 ${
@@ -306,8 +306,8 @@ export const CompareView: React.FC<CompareViewProps> = ({ snapshots, onSelectSer
       </section>
 
       {/* Part 2: Inter-Server Mesh Latency Matrix */}
-      <section className="bg-[#0f131b] border border-white/[0.07] rounded-2xl p-5 space-y-4">
-        <div className="flex items-center justify-between">
+      <section className="bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
             <Network className="w-3.5 h-3.5 text-sky-400" />
             节点间实时互通延迟矩阵 (TCP RTT)
@@ -320,15 +320,15 @@ export const CompareView: React.FC<CompareViewProps> = ({ snapshots, onSelectSer
         </div>
 
         {!mesh ? (
-          <div className="bg-[#090b10] border border-dashed border-white/10 rounded-xl p-8 text-center text-xs text-slate-400">
-            点击右上角「测试节点间互通延迟」，并行测量每对服务器之间的真实 TCP 往返延迟（优先走 Tailscale 内网，不可达时测公网）。
+          <div className="bg-[#090b10] border border-dashed border-white/10 rounded-xl p-6 sm:p-8 text-center text-xs text-slate-400">
+            点击上方「测试节点间互通延迟」，并行测量每对服务器之间的真实 TCP 往返延迟（优先走 Tailscale 内网，不可达时测公网）。
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs font-mono">
+            <table className="w-full text-xs font-mono whitespace-nowrap">
               <thead>
                 <tr className="text-[11px] text-slate-500 border-b border-white/[0.06]">
-                  <th className="py-2.5 px-3 text-left font-sans">源节点 → 目标节点</th>
+                  <th className="py-2.5 px-3 text-left font-sans sticky left-0 z-10 bg-[#0f131b]">源节点 → 目标节点</th>
                   {snapshots.map((dst) => (
                     <th key={dst.server.id} className="py-2.5 px-3 text-center">
                       {serverFlag(dst.server.region, dst.latestNodeQuality?.summary.ip.country, dst.server.tags)}{' '}
@@ -340,7 +340,7 @@ export const CompareView: React.FC<CompareViewProps> = ({ snapshots, onSelectSer
               <tbody className="divide-y divide-white/[0.05]">
                 {snapshots.map((src) => (
                   <tr key={src.server.id}>
-                    <td className="py-3 px-3 font-sans font-semibold text-white">
+                    <td className="py-3 px-3 font-sans font-semibold text-white sticky left-0 z-10 bg-[#0f131b]">
                       {serverFlag(src.server.region, src.latestNodeQuality?.summary.ip.country, src.server.tags)}{' '}
                       {src.server.name}
                     </td>

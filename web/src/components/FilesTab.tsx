@@ -160,27 +160,29 @@ export const FilesTab: React.FC<FilesTabProps> = ({ snapshot, initialPath = '/' 
   const isDirty = openFile && openFile.content !== openFile.original;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-[600px]">
-      {/* Left Quick-Jump Bookmarks */}
-      <aside className="lg:col-span-2 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-3 space-y-1 self-start">
-        <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-[480px] lg:min-h-[600px]">
+      {/* Left Quick-Jump Bookmarks (horizontal pill strip on mobile, vertical list on desktop) */}
+      <aside className="lg:col-span-2 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-2.5 sm:p-3 lg:space-y-1 self-start">
+        <div className="px-2 pb-1.5 lg:py-1 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
           常用位置
         </div>
-        {bookmarks.map((b, idx) => (
-          <button
-            key={`${b.path}-${idx}`}
-            onClick={() => loadDir(b.path)}
-            title={b.path}
-            className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs truncate flex items-center gap-2 transition-colors cursor-pointer ${
-              currentPath === b.path
-                ? 'bg-sky-500/15 text-sky-300'
-                : 'text-slate-300 hover:bg-white/[0.04]'
-            }`}
-          >
-            {idx === 0 ? <Home className="w-3.5 h-3.5 shrink-0 text-sky-400" /> : <Folder className="w-3.5 h-3.5 shrink-0 text-amber-400/80" />}
-            <span className="truncate">{b.label}</span>
-          </button>
-        ))}
+        <div className="flex lg:flex-col gap-1 overflow-x-auto no-scrollbar">
+          {bookmarks.map((b, idx) => (
+            <button
+              key={`${b.path}-${idx}`}
+              onClick={() => loadDir(b.path)}
+              title={b.path}
+              className={`shrink-0 lg:shrink lg:w-full text-left px-2.5 py-1.5 rounded-lg text-xs truncate flex items-center gap-1.5 lg:gap-2 transition-colors cursor-pointer ${
+                currentPath === b.path
+                  ? 'bg-sky-500/15 text-sky-300'
+                  : 'text-slate-300 hover:bg-white/[0.04]'
+              }`}
+            >
+              {idx === 0 ? <Home className="w-3.5 h-3.5 shrink-0 text-sky-400" /> : <Folder className="w-3.5 h-3.5 shrink-0 text-amber-400/80" />}
+              <span className="truncate">{b.label}</span>
+            </button>
+          ))}
+        </div>
       </aside>
 
       {/* Center Directory Browser */}
@@ -310,7 +312,7 @@ export const FilesTab: React.FC<FilesTabProps> = ({ snapshot, initialPath = '/' 
                   <span className="w-16 text-right">
                     {entry.isDir ? '—' : formatBytes(entry.size, 1)}
                   </span>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="flex items-center gap-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
                     {!entry.isDir && (
                       <a
                         href={api.downloadUrl(snapshot.server.id, entry.path)}
@@ -403,7 +405,7 @@ export const FilesTab: React.FC<FilesTabProps> = ({ snapshot, initialPath = '/' 
               </a>
             </div>
           ) : (
-            <div className="flex-1 flex flex-col min-h-[460px]">
+            <div className="flex-1 flex flex-col min-h-[360px] lg:min-h-[460px]">
               {openFile.truncated && (
                 <div className="px-4 py-2 bg-amber-500/10 border-b border-amber-500/20 text-[11px] text-amber-300">
                   文件超过 512KB，当前为只读预览前段内容。

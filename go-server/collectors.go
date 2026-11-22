@@ -318,15 +318,20 @@ def get_docker():
             pass
     inspect_map = {}
     if ids:
-        insp = run(['docker', 'inspect', '--format', '{{.Id}}\t{{index .Config.Labels "com.docker.compose.project"}}\t{{index .Config.Labels "com.docker.compose.project.working_dir"}}\t{{if .State.Health}}{{.State.Health.Status}}{{end}}'] + ids, timeout=8)
-        for line in insp.splitlines():
-            parts = line.split('\t')
-            if len(parts) >= 4:
-                inspect_map[parts[0]] = {
-                    'project': parts[1] or '',
-                    'dir': parts[2] or '',
-                    'health': parts[3] or '',
-                }
+        insp = run(['docker', 'inspect'] + ids, timeout=8)
+        if insp.strip():
+            try:
+                for obj in json.loads(insp):
+                    cid = obj.get('Id', '')
+                    labels = (obj.get('Config') or {}).get('Labels') or {}
+                    health = ((obj.get('State') or {}).get('Health') or {}).get('Status', '')
+                    inspect_map[cid] = {
+                        'project': labels.get('com.docker.compose.project', '') or '',
+                        'dir': labels.get('com.docker.compose.project.working_dir', '') or '',
+                        'health': health or '',
+                    }
+            except Exception:
+                pass
     return True, containers, inspect_map
 
 def get_ports():
@@ -963,11 +968,20 @@ if docker_ok:
         except Exception:
             pass
     if ids:
-        insp = run(['docker', 'inspect', '--format', '{{.Id}}\t{{index .Config.Labels "com.docker.compose.project"}}\t{{index .Config.Labels "com.docker.compose.project.working_dir"}}\t{{if .State.Health}}{{.State.Health.Status}}{{end}}'] + ids)
-        for line in insp.splitlines():
-            p = line.split('\t')
-            if len(p) >= 4:
-                inspect_map[p[0]] = {'project': p[1], 'dir': p[2], 'health': p[3]}
+        insp = run(['docker', 'inspect'] + ids, timeout=10)
+        if insp.strip():
+            try:
+                for obj in json.loads(insp):
+                    cid = obj.get('Id', '')
+                    labels = (obj.get('Config') or {}).get('Labels') or {}
+                    health = ((obj.get('State') or {}).get('Health') or {}).get('Status', '')
+                    inspect_map[cid] = {
+                        'project': labels.get('com.docker.compose.project', '') or '',
+                        'dir': labels.get('com.docker.compose.project.working_dir', '') or '',
+                        'health': health or '',
+                    }
+            except Exception:
+                pass
         st = run(['docker', 'stats', '--no-stream', '--no-trunc', '--format', '{{.ID}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}\t{{.NetIO}}'], timeout=12)
         for line in st.splitlines():
             p = line.split('\t')

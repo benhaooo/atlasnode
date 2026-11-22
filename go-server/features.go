@@ -623,7 +623,29 @@ if [ -n "$COMPOSE_CMD" ]; then
   if [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ]; then
     EXTRA_ARGS="$EXTRA_ARGS --env-file $ENV_FILE"
   fi
+fi
 
+# If no v2+ binary was found, allow legacy docker-compose v1 if it actually parses this stack's config
+if [ -z "$COMPOSE_CMD" ] && command -v docker-compose >/dev/null 2>&1; then
+  LEGACY_ARGS=""
+  [ -n "$PROJ" ] && LEGACY_ARGS="$LEGACY_ARGS -p $PROJ"
+  if [ -n "$CFG_FILES" ]; then
+    OLD_IFS="$IFS"
+    IFS=','
+    for cf in $CFG_FILES; do
+      [ -f "$cf" ] && LEGACY_ARGS="$LEGACY_ARGS -f $cf"
+    done
+    IFS="$OLD_IFS"
+  fi
+  [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ] && LEGACY_ARGS="$LEGACY_ARGS --env-file $ENV_FILE"
+  # shellcheck disable=SC2086
+  if docker-compose $LEGACY_ARGS config -q >/dev/null 2>&1; then
+    COMPOSE_CMD="docker-compose"
+    EXTRA_ARGS="$LEGACY_ARGS"
+  fi
+fi
+
+if [ -n "$COMPOSE_CMD" ]; then
   case "$ACTION" in
     pull_up)
       echo "[AtlasNode] $PWD -> $COMPOSE_CMD$EXTRA_ARGS pull && up -d"

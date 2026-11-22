@@ -551,14 +551,56 @@ PROJ="$2"
 ACTION="$3"
 cd "$DIR"
 
+# Find containers belonging to this compose stack
+if [ -n "$PROJ" ]; then
+  RUNNING_CIDS=$(docker ps -q --filter "label=com.docker.compose.project=$PROJ" 2>/dev/null || true)
+  ALL_CIDS=$(docker ps -aq --filter "label=com.docker.compose.project=$PROJ" 2>/dev/null || true)
+else
+  RUNNING_CIDS=$(docker ps -q --filter "label=com.docker.compose.project.working_dir=$DIR" 2>/dev/null || true)
+  ALL_CIDS=$(docker ps -aq --filter "label=com.docker.compose.project.working_dir=$DIR" 2>/dev/null || true)
+fi
+
+# For stop: stopping the running containers of this stack directly is always exact
+# (avoids legacy docker-compose v1 / missing .env / custom -p mismatches)
+if [ "$ACTION" = "stop" ]; then
+  if [ -z "$RUNNING_CIDS" ]; then
+    echo "[AtlasNode] 该栈当前没有运行中的容器"
+    exit 0
+  fi
+  echo "[AtlasNode] 正在停止栈 ${PROJ:-$DIR} 中的容器..."
+  echo "$RUNNING_CIDS" | xargs -r docker stop 2>&1
+  exit 0
+fi
+
+# Inspect one container's labels to recover original -f config_files & --env-file
+SAMPLE_CID=$(echo "$ALL_CIDS" | head -n 1)
+CFG_FILES=""
+ENV_FILE=""
+if [ -n "$SAMPLE_CID" ]; then
+  CFG_FILES=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}' "$SAMPLE_CID" 2>/dev/null || true)
+  ENV_FILE=$(docker inspect --format '{{index .Config.Labels "com.docker.compose.project.environment_file"}}' "$SAMPLE_CID" 2>/dev/null || true)
+fi
+
+# Detect modern Compose v2+ binary first (skip legacy v1.x which rejects compose.yml & v2 syntax)
+is_v2() {
+  ver=$("$@" version 2>/dev/null || true)
+  [ -n "$ver" ] && ! echo "$ver" | grep -qi "version 1\."
+}
+
 COMPOSE_CMD=""
 if docker compose version >/dev/null 2>&1; then
   COMPOSE_CMD="docker compose"
-elif command -v docker-compose >/dev/null 2>&1; then
-  COMPOSE_CMD="docker-compose"
 else
-  for cand in /usr/local/bin/docker-compose /usr/bin/docker-compose /usr/libexec/docker/cli-plugins/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose "$HOME/.docker/cli-plugins/docker-compose"; do
-    if [ -x "$cand" ]; then
+  PARENT_DIR=$(dirname "$DIR")
+  for cand in \
+    "$DIR/bin/docker-compose" \
+    "$PARENT_DIR/bin/docker-compose" \
+    /usr/local/bin/docker-compose \
+    /usr/libexec/docker/cli-plugins/docker-compose \
+    /usr/local/lib/docker/cli-plugins/docker-compose \
+    "$HOME/.docker/cli-plugins/docker-compose" \
+    "$(command -v docker-compose 2>/dev/null || true)"; do
+    if [ -n "$cand" ] && [ -x "$cand" ] && is_v2 "$cand"; then
       COMPOSE_CMD="$cand"
       break
     fi
@@ -566,49 +608,56 @@ else
 fi
 
 if [ -n "$COMPOSE_CMD" ]; then
+  EXTRA_ARGS=""
+  if [ -n "$PROJ" ]; then
+    EXTRA_ARGS="$EXTRA_ARGS -p $PROJ"
+  fi
+  if [ -n "$CFG_FILES" ]; then
+    OLD_IFS="$IFS"
+    IFS=','
+    for cf in $CFG_FILES; do
+      [ -f "$cf" ] && EXTRA_ARGS="$EXTRA_ARGS -f $cf"
+    done
+    IFS="$OLD_IFS"
+  fi
+  if [ -n "$ENV_FILE" ] && [ -f "$ENV_FILE" ]; then
+    EXTRA_ARGS="$EXTRA_ARGS --env-file $ENV_FILE"
+  fi
+
   case "$ACTION" in
     pull_up)
-      echo "[AtlasNode] $PWD -> $COMPOSE_CMD pull && $COMPOSE_CMD up -d"
-      $COMPOSE_CMD pull 2>&1 && $COMPOSE_CMD up -d 2>&1
+      echo "[AtlasNode] $PWD -> $COMPOSE_CMD$EXTRA_ARGS pull && up -d"
+      # shellcheck disable=SC2086
+      $COMPOSE_CMD $EXTRA_ARGS pull 2>&1 && $COMPOSE_CMD $EXTRA_ARGS up -d 2>&1
       ;;
     restart)
-      echo "[AtlasNode] $PWD -> $COMPOSE_CMD restart"
-      $COMPOSE_CMD restart 2>&1
-      ;;
-    stop)
-      echo "[AtlasNode] $PWD -> $COMPOSE_CMD stop"
-      $COMPOSE_CMD stop 2>&1
+      echo "[AtlasNode] $PWD -> $COMPOSE_CMD$EXTRA_ARGS restart"
+      # shellcheck disable=SC2086
+      $COMPOSE_CMD $EXTRA_ARGS restart 2>&1
       ;;
     *)
-      echo "[AtlasNode] $PWD -> $COMPOSE_CMD up -d"
-      $COMPOSE_CMD up -d 2>&1
+      echo "[AtlasNode] $PWD -> $COMPOSE_CMD$EXTRA_ARGS up -d"
+      # shellcheck disable=SC2086
+      $COMPOSE_CMD $EXTRA_ARGS up -d 2>&1
       ;;
   esac
   exit 0
 fi
 
-# Fallback when host only has docker CLI without compose plugin
-CIDS=""
-if [ -n "$PROJ" ]; then
-  CIDS=$(docker ps -aq --filter "label=com.docker.compose.project=$PROJ" 2>/dev/null || true)
-fi
-if [ -z "$CIDS" ]; then
-  CIDS=$(docker ps -aq --filter "label=com.docker.compose.project.working_dir=$DIR" 2>/dev/null || true)
-fi
-
+# Fallback when no Compose v2+ binary exists on host
 case "$ACTION" in
-  stop|restart|up)
-    if [ -z "$CIDS" ]; then
-      echo "[AtlasNode] 未找到 docker compose / docker-compose 命令，且未匹配到该栈容器" >&2
+  restart|up)
+    if [ -z "$ALL_CIDS" ]; then
+      echo "[AtlasNode] 未找到 Compose v2+ 命令，且未匹配到该栈容器" >&2
       exit 127
     fi
     SUB="$ACTION"
     [ "$SUB" = "up" ] && SUB="start"
-    echo "[AtlasNode] 未检测到 compose 插件，自动回退为 docker $SUB 整栈容器..."
-    echo "$CIDS" | xargs -r docker "$SUB" 2>&1
+    echo "[AtlasNode] 未检测到 Compose v2+，自动回退为 docker $SUB 整栈容器..."
+    echo "$ALL_CIDS" | xargs -r docker "$SUB" 2>&1
     ;;
   *)
-    echo "[AtlasNode] 未找到 docker compose 或 docker-compose 命令，请先安装 docker-compose-plugin（如 apt install docker-compose-plugin）" >&2
+    echo "[AtlasNode] 未找到 Compose v2+ 命令（系统仅装了不兼容新版 compose.yml 的旧版 docker-compose v1），请安装 docker-compose-plugin" >&2
     exit 127
     ;;
 esac

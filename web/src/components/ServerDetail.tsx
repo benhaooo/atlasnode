@@ -236,17 +236,17 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
 
   return (
     <div className="min-h-dvh flex flex-col">
-      {/* Server Identity Bar (scrolls away on mobile to save vertical space) */}
-      <div className="bg-[#090b10] border-b border-white/[0.04] lg:border-b-0">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-3 sm:pt-4 pb-3 sm:pb-3.5">
+      {/* Server Identity Bar (clean, breathing header) */}
+      <div className="bg-transparent">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-4 sm:pt-5 pb-3">
           {/* Identity Row */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
             <div className="min-w-0">
-              <div className="flex items-center gap-2 sm:gap-2.5 flex-wrap">
+              <div className="flex items-center gap-2.5 flex-wrap">
                 <span
-                  className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                  className={`w-2 h-2 rounded-full shrink-0 ${
                     snapshot.online
-                      ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.55)]'
+                      ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.65)]'
                       : 'bg-rose-500'
                   }`}
                 />
@@ -256,25 +256,29 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                 <h1 className="text-base sm:text-lg font-semibold text-white tracking-tight">
                   {snapshot.server.name}
                 </h1>
-                <span className="text-xs text-sky-300/90 font-medium">{snapshot.server.role}</span>
-
+                {snapshot.server.role && (
+                  <span className="text-xs text-slate-400">{snapshot.server.role}</span>
+                )}
                 {streamConnected && (
-                  <span className="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+                  <span
+                    title="2 秒实时遥测已连接"
+                    className="inline-flex items-center gap-1 text-[10px] font-mono text-emerald-400/90"
+                  >
                     <Activity className="w-2.5 h-2.5 animate-pulse" />
-                    LIVE 2s
+                    <span>LIVE</span>
                   </span>
                 )}
               </div>
 
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1.5 text-[11px] font-mono text-slate-400">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1.5 text-[11px] font-mono text-slate-500">
                 {snapshot.publicIp && (
                   <button
                     onClick={() => handleCopy('pub', snapshot.publicIp!)}
-                    className="inline-flex items-center gap-1 hover:text-white transition-colors cursor-pointer"
+                    className="inline-flex items-center gap-1 text-slate-400 hover:text-white transition-colors cursor-pointer"
                   >
-                    <Globe className="w-3 h-3 text-slate-500" />
+                    <Globe className="w-3 h-3 text-slate-600" />
                     <span>{snapshot.publicIp}</span>
-                    {copied === 'pub' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-2.5 h-2.5 opacity-50" />}
+                    {copied === 'pub' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-2.5 h-2.5 opacity-40" />}
                   </button>
                 )}
                 {snapshot.tailscaleIp && (
@@ -282,11 +286,11 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                     <span className="text-slate-700">·</span>
                     <button
                       onClick={() => handleCopy('ts', snapshot.tailscaleIp!)}
-                      className="inline-flex items-center gap-1 text-sky-300 hover:text-sky-200 transition-colors cursor-pointer"
+                      className="inline-flex items-center gap-1 text-sky-400/90 hover:text-sky-300 transition-colors cursor-pointer"
                     >
                       <Radio className="w-3 h-3" />
                       <span>{snapshot.tailscaleIp}</span>
-                      {copied === 'ts' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-2.5 h-2.5 opacity-50" />}
+                      {copied === 'ts' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-2.5 h-2.5 opacity-40" />}
                     </button>
                   </>
                 )}
@@ -301,51 +305,57 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
               </div>
             </div>
 
-            {/* Right Utility & Action Toolbar */}
-            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap shrink-0">
-              <button
-                onClick={() => switchTab(activeTab === 'files' ? 'overview' : 'files')}
-                title="文件管理（应急工具）"
-                className={`flex items-center gap-1.5 text-xs px-2.5 sm:px-3 py-1.5 rounded-lg border transition-colors cursor-pointer ${
-                  activeTab === 'files'
-                    ? 'bg-sky-500/20 border-sky-400/40 text-sky-200 font-medium'
-                    : 'bg-white/[0.04] hover:bg-white/[0.08] border-white/[0.08] text-slate-200'
-                }`}
-              >
-                <FolderOpen className="w-3.5 h-3.5 text-amber-400/90" />
-                <span>文件</span>
-              </button>
-              <button
-                onClick={() => switchTab(activeTab === 'terminal' ? 'overview' : 'terminal')}
-                title="网页终端（应急工具）"
-                className={`flex items-center gap-1.5 text-xs px-2.5 sm:px-3 py-1.5 rounded-lg border transition-colors cursor-pointer ${
-                  activeTab === 'terminal'
-                    ? 'bg-sky-500/20 border-sky-400/40 text-sky-200 font-medium'
-                    : 'bg-white/[0.04] hover:bg-white/[0.08] border-white/[0.08] text-slate-200'
-                }`}
-              >
-                <Terminal className="w-3.5 h-3.5 text-emerald-400" />
-                <span>终端</span>
-              </button>
+            {/* Right Utility & Action Toolbar (grouped pill + ghost icons) */}
+            <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+              <div className="inline-flex items-center bg-white/[0.03] border border-white/[0.06] rounded-lg p-0.5">
+                <button
+                  onClick={() => switchTab(activeTab === 'files' ? 'overview' : 'files')}
+                  title="文件管理"
+                  className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+                    activeTab === 'files'
+                      ? 'bg-sky-500/20 text-sky-200 font-medium'
+                      : 'text-slate-300 hover:text-white hover:bg-white/[0.05]'
+                  }`}
+                >
+                  <FolderOpen className="w-3.5 h-3.5 text-amber-400/90" />
+                  <span>文件</span>
+                </button>
+                <button
+                  onClick={() => switchTab(activeTab === 'terminal' ? 'overview' : 'terminal')}
+                  title="网页终端"
+                  className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+                    activeTab === 'terminal'
+                      ? 'bg-sky-500/20 text-sky-200 font-medium'
+                      : 'text-slate-300 hover:text-white hover:bg-white/[0.05]'
+                  }`}
+                >
+                  <Terminal className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>终端</span>
+                </button>
+              </div>
+
               <button
                 onClick={() => handleCopy('ssh', sshCmd)}
                 title={`复制 SSH 命令: ${sshCmd}`}
-                className="flex items-center gap-1.5 text-xs font-mono bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-200 px-2.5 sm:px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                className="flex items-center gap-1.5 text-xs font-mono text-slate-400 hover:text-white hover:bg-white/[0.05] px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
               >
-                {copied === 'ssh' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-sky-400" />}
+                {copied === 'ssh' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-sky-400/80" />}
                 <span>{copied === 'ssh' ? '已复制' : 'SSH'}</span>
               </button>
+
+              <div className="w-px h-4 bg-white/[0.06] mx-0.5 hidden sm:block" />
+
               <button
                 onClick={() => setEditingMeta(true)}
                 title="编辑节点备注与用途"
-                className="p-2 sm:p-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-300 hover:text-white transition-colors cursor-pointer"
+                className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/[0.05] transition-colors cursor-pointer"
               >
                 <Edit3 className="w-3.5 h-3.5" />
               </button>
               <button
                 onClick={onRefreshSnapshot}
                 title="刷新快照"
-                className="p-2 sm:p-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-300 hover:text-white transition-colors cursor-pointer"
+                className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/[0.05] transition-colors cursor-pointer"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
               </button>
@@ -353,7 +363,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                 <button
                   onClick={handleDeleteServer}
                   title="移除节点"
-                  className="p-2 sm:p-1.5 rounded-lg bg-white/[0.04] hover:bg-rose-500/15 border border-white/[0.08] hover:border-rose-500/30 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+                  className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors cursor-pointer"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
@@ -364,7 +374,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
       </div>
 
       {/* Persistent Primary Workspace Tabs (4 high-signal domains) */}
-      <header className="sticky top-12 lg:top-0 z-20 bg-[#090b10]/95 backdrop-blur-md border-b border-white/[0.06]">
+      <header className="sticky top-12 lg:top-0 z-20 bg-[#080a0f]/85 backdrop-blur-xl border-b border-white/[0.05]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
           <nav className="flex items-center gap-0.5 sm:gap-1 overflow-x-auto no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0 -mb-px">
             {PRIMARY_TABS.map((g) => {

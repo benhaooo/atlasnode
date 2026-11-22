@@ -286,7 +286,7 @@ export default function App() {
     viewMode === 'compare' ? '多节点横向对比' : viewMode === 'server' ? null : '节点全局总览';
 
   return (
-    <div className="min-h-dvh bg-[#090b10] text-[#e8ecf4] flex">
+    <div className="min-h-dvh text-[#e6ebf5] flex">
       <Sidebar
         snapshots={snapshots}
         selectedId={viewMode === 'server' ? selectedId : null}

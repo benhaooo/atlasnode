@@ -9,8 +9,6 @@ import {
   Check,
   Copy,
   ExternalLink,
-  Globe,
-  HardDrive,
   Plus,
   Radio,
   Shield,
@@ -23,7 +21,6 @@ import {
   copyToClipboard,
   countryFlag,
   formatBytes,
-  formatRelativeTime,
   formatSpeed,
   formatUptime,
   serverFlag,
@@ -59,7 +56,7 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
   const totalRx = onlineSnaps.reduce((acc, s) => acc + (s.metrics?.netRxBps || 0), 0);
   const totalTx = onlineSnaps.reduce((acc, s) => acc + (s.metrics?.netTxBps || 0), 0);
 
-  // Collect high-signal alerts only (non-noisy)
+  // High-signal alerts only
   const alerts: { serverId: string; serverName: string; message: string; severity: 'warn' | 'danger'; tab: string }[] = [];
   for (const s of snapshots) {
     if (!s.online) {
@@ -76,7 +73,7 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
       alerts.push({
         serverId: s.server.id,
         serverName: s.server.name,
-        message: `根分区空间紧张 (${s.metrics?.diskRootPercent.toFixed(0)}%)`,
+        message: `磁盘空间紧张 (${s.metrics?.diskRootPercent.toFixed(0)}%)`,
         severity: 'warn',
         tab: 'files',
       });
@@ -85,7 +82,7 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
       alerts.push({
         serverId: s.server.id,
         serverName: s.server.name,
-        message: `${s.dockerSummary.unhealthy} 个容器处于 Unhealthy 状态`,
+        message: `${s.dockerSummary.unhealthy} 个容器异常`,
         severity: 'danger',
         tab: 'services',
       });
@@ -94,7 +91,7 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
       alerts.push({
         serverId: s.server.id,
         serverName: s.server.name,
-        message: `UFW 防火墙未启用，公网监听 ${s.firewallSummary.publicPortsCount} 个 TCP 端口`,
+        message: `防火墙未启 · 公网监听 ${s.firewallSummary.publicPortsCount} 端口`,
         severity: 'warn',
         tab: 'firewall',
       });
@@ -103,7 +100,7 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
       alerts.push({
         serverId: s.server.id,
         serverName: s.server.name,
-        message: `线路异常（丢包 ${s.networkSummary.maxLossPct}% / 晚高峰波动大）`,
+        message: `线路异常（丢包 ${s.networkSummary.maxLossPct}%）`,
         severity: 'danger',
         tab: 'network',
       });
@@ -112,180 +109,137 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
       alerts.push({
         serverId: s.server.id,
         serverName: s.server.name,
-        message: `本月流量已用 ${s.trafficSummary.usedPercent.toFixed(0)}%（${formatBytes(s.trafficSummary.billedBytes)} / ${formatBytes(s.trafficSummary.quotaBytes, 0)}）`,
+        message: `月流量已用 ${s.trafficSummary.usedPercent.toFixed(0)}%`,
         severity: s.trafficSummary.usedPercent >= 95 ? 'danger' : 'warn',
         tab: 'overview',
       });
     }
   }
 
-  const netGradeMeta = (grade?: string) => {
-    switch (grade) {
-      case 'excellent':
-        return { label: '线路稳健', cls: 'bg-emerald-500/12 border-emerald-500/25 text-emerald-300' };
-      case 'good':
-        return { label: '线路平稳', cls: 'bg-sky-500/12 border-sky-400/25 text-sky-300' };
-      case 'degraded':
-        return { label: '高峰波动', cls: 'bg-amber-500/12 border-amber-400/25 text-amber-300' };
-      case 'poor':
-        return { label: '丢包炸线', cls: 'bg-rose-500/15 border-rose-500/30 text-rose-300' };
-      default:
-        return null;
-    }
+  const netDotColor = (grade?: string) => {
+    if (grade === 'excellent') return 'bg-emerald-400';
+    if (grade === 'good') return 'bg-sky-400';
+    if (grade === 'degraded') return 'bg-amber-400';
+    if (grade === 'poor') return 'bg-rose-400';
+    return 'bg-slate-600';
   };
 
-  const KEY_PROXY_SERVICES = ['chatgpt', 'openai', 'claude', 'gemini', 'netflix', 'youtube', 'disney+', 'tiktok'];
-
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5 sm:py-7 space-y-5 sm:space-y-6">
-      {/* Header + Compact Signal Ribbon */}
-      <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
+      {/* Clean Header + Quiet Metric Summary */}
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
-          <h1 className="text-lg sm:text-xl font-semibold tracking-tight text-white">服务器态势总览</h1>
-          <p className="text-xs text-slate-400 mt-1">
-            一眼掌握每台节点的用途、运行服务、公网质量与实时健康状态
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex flex-wrap items-center gap-x-3 sm:gap-x-4 gap-y-1.5 bg-[#0f131b] border border-white/[0.07] rounded-xl px-3 sm:px-4 py-2 text-xs">
-            <div className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span className="text-slate-400">在线</span>
-              <span className="font-mono font-semibold text-white">
-                {onlineSnaps.length}/{snapshots.length}
-              </span>
-            </div>
-            <div className="w-px h-3.5 bg-white/10" />
-            <div className="flex items-center gap-1.5">
-              <Box className="w-3.5 h-3.5 text-sky-400" />
-              <span className="text-slate-400">运行容器</span>
-              <span className="font-mono font-semibold text-white">{totalRunningContainers}</span>
-            </div>
-            <div className="w-px h-3.5 bg-white/10 hidden sm:block" />
-            <div className="hidden sm:flex items-center gap-2 font-mono text-[11px]">
-              <span className="flex items-center gap-0.5 text-emerald-400">
+          <h1 className="text-lg sm:text-xl font-semibold tracking-tight text-white">全局总览</h1>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-xs text-slate-400 font-mono">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <span className="text-slate-200">{onlineSnaps.length}/{snapshots.length}</span> 在线
+            </span>
+            <span className="text-slate-700">·</span>
+            <span>{totalRunningContainers} 容器运行中</span>
+            <span className="text-slate-700 hidden sm:inline">·</span>
+            <span className="hidden sm:inline-flex items-center gap-2 text-[11px]">
+              <span className="text-emerald-400 inline-flex items-center">
                 <ArrowDown className="w-3 h-3" />
                 {formatSpeed(totalRx)}
               </span>
-              <span className="flex items-center gap-0.5 text-sky-400">
+              <span className="text-sky-400 inline-flex items-center">
                 <ArrowUp className="w-3 h-3" />
                 {formatSpeed(totalTx)}
               </span>
-            </div>
+            </span>
           </div>
-
-          <button
-            onClick={onAddServer}
-            className="flex items-center gap-1.5 bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold text-xs px-3.5 py-2 rounded-xl transition-colors cursor-pointer"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            <span>添加 / 发现节点</span>
-          </button>
         </div>
+
+        <button
+          onClick={onAddServer}
+          className="self-start sm:self-auto inline-flex items-center gap-1.5 bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold text-xs px-3.5 py-2 rounded-xl transition-colors cursor-pointer"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          <span>添加节点</span>
+        </button>
       </div>
 
-      {/* Priority Attention Strip (only shown when something needs attention) */}
+      {/* Quiet Priority Attention Strip */}
       {alerts.length > 0 && (
-        <div className="bg-amber-500/[0.06] border border-amber-400/20 rounded-xl px-4 py-3">
-          <div className="flex items-center gap-2 text-xs font-medium text-amber-300 mb-2">
+        <div className="flex flex-wrap items-center gap-2 bg-amber-500/[0.05] border border-amber-400/15 rounded-xl px-3.5 py-2.5">
+          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-300 mr-1">
             <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-            <span>需要关注 ({alerts.length})</span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {alerts.map((a, i) => (
-              <button
-                key={i}
-                onClick={() => onSelectServer(a.serverId, a.tab)}
-                className={`flex items-center gap-2 text-xs text-left max-w-full px-2.5 py-1.5 rounded-lg border transition-colors cursor-pointer ${
-                  a.severity === 'danger'
-                    ? 'bg-rose-500/10 border-rose-500/25 text-rose-300 hover:bg-rose-500/20'
-                    : 'bg-amber-500/10 border-amber-500/20 text-amber-200 hover:bg-amber-500/20'
-                }`}
-              >
-                <span className="font-mono font-semibold shrink-0">{a.serverName}</span>
-                <span className="text-slate-300 truncate">{a.message}</span>
-                <ArrowUpRight className="w-3 h-3 opacity-70 shrink-0" />
-              </button>
-            ))}
-          </div>
+            <span>关注 ({alerts.length})</span>
+          </span>
+          {alerts.map((a, i) => (
+            <button
+              key={i}
+              onClick={() => onSelectServer(a.serverId, a.tab)}
+              className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg transition-colors cursor-pointer ${
+                a.severity === 'danger'
+                  ? 'bg-rose-500/12 text-rose-300 hover:bg-rose-500/20'
+                  : 'bg-amber-500/10 text-amber-200 hover:bg-amber-500/20'
+              }`}
+            >
+              <span className="font-mono font-semibold">{a.serverName}</span>
+              <span className="text-slate-300">{a.message}</span>
+              <ArrowUpRight className="w-3 h-3 opacity-60" />
+            </button>
+          ))}
         </div>
       )}
 
-      {/* Server Dossiers — Weighted Horizontal Cards */}
+      {/* Clean, Airy Server Roster Cards */}
       {loading && snapshots.length === 0 ? (
         <FleetSkeleton />
       ) : (
-        <div className="space-y-4">
+        <div className="space-y-3.5">
           {snapshots.map((snap) => {
             const m = snap.metrics;
             const nq = snap.latestNodeQuality;
-            const allLinks = [...snap.server.quickLinks, ...snap.detectedLinks].slice(0, 6);
+            const ts = snap.trafficSummary;
+            const allLinks = [...snap.server.quickLinks, ...snap.detectedLinks].slice(0, 4);
             const sshCmd = `ssh ${snap.server.username}@${snap.tailscaleIp || snap.publicIp || snap.server.host}${snap.server.port !== 22 ? ` -p ${snap.server.port}` : ''}`;
 
-            // Group running containers by compose project for crisp "what's inside" pills
             const stacks = new Map<string, number>();
             for (const c of snap.containersPreview) {
               if (c.state !== 'running') continue;
               const key = c.composeProject || c.name;
               stacks.set(key, (stacks.get(key) || 0) + 1);
             }
-            const stackList = Array.from(stacks.entries()).slice(0, 6);
-
-            const keyUnlocks = (nq?.summary.unlocks || [])
-              .filter(
-                (u) =>
-                  (u.status === 'native' || u.status === 'unlocked' || u.status === 'dns') &&
-                  KEY_PROXY_SERVICES.includes(u.service.toLowerCase())
-              )
-              .slice(0, 4);
-            const netBadge = netGradeMeta(snap.networkSummary?.grade);
+            const stackEntries = Array.from(stacks.entries());
 
             return (
               <div
                 key={snap.server.id}
                 onClick={() => onSelectServer(snap.server.id, 'overview')}
-                className="group bg-[#0f131b] hover:bg-[#121722] border border-white/[0.07] hover:border-sky-400/30 rounded-2xl p-4 sm:p-5 transition-all cursor-pointer"
+                className="group bg-white/[0.025] hover:bg-white/[0.045] border border-white/[0.06] hover:border-sky-400/25 rounded-2xl p-4 sm:p-5 transition-all cursor-pointer"
               >
-                <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 sm:gap-5 items-start">
-                  {/* ZONE 1 (Primary): Identity, Role & Network Addresses */}
-                  <div className="xl:col-span-4 space-y-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2.5">
-                          <span
-                            className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                              snap.online
-                                ? 'bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.55)]'
-                                : 'bg-rose-500'
-                            }`}
-                          />
-                          <span className="text-base leading-none shrink-0">
-                            {serverFlag(snap.server.region, nq?.summary.ip.country, snap.server.tags)}
+                <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 items-center">
+                  {/* ZONE 1: Identity & Address (4 cols) */}
+                  <div className="xl:col-span-4 space-y-2 min-w-0">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span
+                          className={`w-2 h-2 rounded-full shrink-0 ${
+                            snap.online
+                              ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]'
+                              : 'bg-rose-500'
+                          }`}
+                        />
+                        <span className="text-base leading-none shrink-0">
+                          {serverFlag(snap.server.region, nq?.summary.ip.country, snap.server.tags)}
+                        </span>
+                        <h2 className="text-[15px] font-semibold text-white tracking-tight truncate">
+                          {snap.server.name}
+                        </h2>
+                        {snap.server.mode === 'local' && (
+                          <span className="text-[10px] font-mono text-sky-300/90 bg-sky-500/10 px-1.5 py-0.5 rounded">
+                            中枢
                           </span>
-                          <h2 className="text-base font-semibold text-white tracking-tight truncate">
-                            {snap.server.name}
-                          </h2>
-                          {snap.server.mode === 'local' && (
-                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-400/25">
-                              本机中枢
-                            </span>
-                          )}
-                          {snap.server.jumpHost && (
-                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-400/25">
-                              跳板可达
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-xs text-sky-300/90 font-medium mt-1">
-                          {snap.server.role}
-                        </div>
+                        )}
                       </div>
 
                       <button
                         onClick={(e) => handleCopy(`ssh-${snap.server.id}`, sshCmd, e)}
-                        title={`复制 SSH 命令: ${sshCmd}`}
-                        className="shrink-0 flex items-center gap-1 text-[11px] font-mono text-slate-400 hover:text-white bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.07] px-2 py-1 rounded-lg transition-colors cursor-pointer"
+                        title={`复制 SSH: ${sshCmd}`}
+                        className="shrink-0 inline-flex items-center gap-1 text-[11px] font-mono text-slate-500 hover:text-white hover:bg-white/[0.06] px-2 py-1 rounded-lg transition-colors cursor-pointer"
                       >
                         {copiedKey === `ssh-${snap.server.id}` ? (
                           <Check className="w-3 h-3 text-emerald-400" />
@@ -296,64 +250,45 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
                       </button>
                     </div>
 
-                    {snap.server.notes && (
-                      <p className="text-xs text-slate-400 leading-relaxed line-clamp-2">
-                        {snap.server.notes}
-                      </p>
+                    {snap.server.role && (
+                      <div className="text-xs text-slate-400 truncate pl-4">
+                        {snap.server.role}
+                      </div>
                     )}
 
-                    {/* IP & Spec Pills */}
-                    <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                    <div className="pl-4 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] font-mono text-slate-500">
                       {snap.publicIp && (
                         <button
                           onClick={(e) => handleCopy(`pub-${snap.server.id}`, snap.publicIp!, e)}
-                          className="flex items-center gap-1.5 text-[11px] font-mono bg-[#090b10] border border-white/[0.08] hover:border-white/20 text-slate-300 px-2 py-0.5 rounded-md cursor-pointer"
+                          className="inline-flex items-center gap-1 text-slate-400 hover:text-white transition-colors cursor-pointer"
                         >
-                          <Globe className="w-3 h-3 text-slate-500" />
                           <span>{snap.publicIp}</span>
                           {copiedKey === `pub-${snap.server.id}` ? (
                             <Check className="w-2.5 h-2.5 text-emerald-400" />
                           ) : (
-                            <Copy className="w-2.5 h-2.5 text-slate-600" />
+                            <Copy className="w-2.5 h-2.5 opacity-40" />
                           )}
                         </button>
                       )}
                       {snap.tailscaleIp && (
                         <button
                           onClick={(e) => handleCopy(`ts-${snap.server.id}`, snap.tailscaleIp!, e)}
-                          className="flex items-center gap-1.5 text-[11px] font-mono bg-sky-500/[0.07] border border-sky-400/20 hover:border-sky-400/40 text-sky-300 px-2 py-0.5 rounded-md cursor-pointer"
+                          className="inline-flex items-center gap-1 text-sky-400/80 hover:text-sky-300 transition-colors cursor-pointer"
                         >
-                          <Radio className="w-3 h-3 text-sky-400" />
+                          <Radio className="w-2.5 h-2.5" />
                           <span>{snap.tailscaleIp}</span>
                         </button>
                       )}
-                    </div>
-
-                    {snap.online && (
-                      <div className="text-[11px] text-slate-500 font-mono flex flex-wrap gap-x-3 gap-y-1">
-                        <span>{snap.os?.replace(' LTS', '') || 'Linux'}</span>
+                      {snap.online && (
                         <span>
-                          {snap.cpuCores}C · {m ? formatBytes(m.memTotalBytes, 1) : '—'}
+                          {snap.cpuCores}C · {m ? formatBytes(m.memTotalBytes, 0) : '—'} · {formatUptime(m?.uptimeSeconds)}
                         </span>
-                        <span>运行 {formatUptime(m?.uptimeSeconds)}</span>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
 
-                  {/* ZONE 2 (Primary): What's Running Inside + Quick Access */}
-                  <div className="xl:col-span-5 pt-3.5 border-t border-white/[0.06] xl:pt-0 xl:border-t-0 xl:border-l xl:border-white/[0.06] xl:pl-5 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                        里面运行着什么 · 快捷入口
-                      </span>
-                      <span className="text-[11px] font-mono text-slate-500">
-                        {snap.dockerAvailable
-                          ? `${snap.dockerSummary.running}/${snap.dockerSummary.total} 容器`
-                          : `${snap.systemdHighlights.length} 常驻服务`}
-                      </span>
-                    </div>
-
-                    {/* Quick Launch Web Services */}
+                  {/* ZONE 2: Services & Quick Launch (4 cols) */}
+                  <div className="xl:col-span-4 xl:border-l xl:border-white/[0.05] xl:pl-5 space-y-2.5 min-w-0">
                     {allLinks.length > 0 && (
                       <div className="flex flex-wrap gap-1.5">
                         {allLinks.map((link) => (
@@ -363,48 +298,36 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
                             target="_blank"
                             rel="noreferrer"
                             onClick={(e) => e.stopPropagation()}
-                            className="inline-flex items-center gap-1.5 text-xs bg-sky-500/10 hover:bg-sky-500/20 text-sky-200 border border-sky-400/20 hover:border-sky-400/40 px-2.5 py-1 rounded-lg transition-colors"
+                            className="inline-flex items-center gap-1 text-[11px] bg-sky-500/[0.08] hover:bg-sky-500/18 text-sky-200 px-2 py-0.5 rounded-md transition-colors"
                           >
-                            <span className="font-medium">{link.name}</span>
-                            {link.port && (
-                              <span className="font-mono text-[10px] text-sky-400/80">:{link.port}</span>
-                            )}
-                            <ExternalLink className="w-3 h-3 opacity-70" />
+                            <span>{link.name}</span>
+                            <ExternalLink className="w-2.5 h-2.5 opacity-60" />
                           </a>
                         ))}
                       </div>
                     )}
 
-                    {/* Running Stacks / Key Services */}
-                    <div className="flex flex-wrap gap-1.5">
-                      {stackList.map(([stackName, count]) => (
-                        <span
-                          key={stackName}
-                          className="inline-flex items-center gap-1 text-[11px] bg-white/[0.03] border border-white/[0.07] text-slate-300 px-2 py-0.5 rounded-md font-mono"
-                        >
-                          <Box className="w-2.5 h-2.5 text-slate-500" />
-                          <span>{stackName}</span>
-                          {count > 1 && <span className="text-slate-500">×{count}</span>}
+                    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] font-mono text-slate-400">
+                      {stackEntries.slice(0, 4).map(([name, count]) => (
+                        <span key={name} className="inline-flex items-center gap-1">
+                          <Box className="w-2.5 h-2.5 text-slate-600" />
+                          <span>{name}</span>
+                          {count > 1 && <span className="text-slate-600">×{count}</span>}
                         </span>
                       ))}
-                      {!snap.dockerAvailable &&
-                        snap.systemdHighlights.slice(0, 6).map((svc) => (
-                          <span
-                            key={svc.name}
-                            className="inline-flex items-center gap-1 text-[11px] bg-white/[0.03] border border-white/[0.07] text-slate-300 px-2 py-0.5 rounded-md font-mono"
-                          >
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/80" />
-                            <span>{svc.name}</span>
-                          </span>
-                        ))}
+                      {stackEntries.length > 4 && (
+                        <span className="text-slate-600">+{stackEntries.length - 4}</span>
+                      )}
+                      {!snap.dockerAvailable && snap.systemdHighlights.length > 0 && (
+                        <span>{snap.systemdHighlights.length} 常驻服务</span>
+                      )}
                     </div>
 
-                    {/* Firewall & Exposure Summary Line */}
                     {snap.online && (
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] pt-0.5">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
                         <span
                           className={`inline-flex items-center gap-1 ${
-                            snap.firewallSummary.active ? 'text-emerald-400' : 'text-amber-400'
+                            snap.firewallSummary.active ? 'text-emerald-400/85' : 'text-amber-400/90'
                           }`}
                         >
                           {snap.firewallSummary.active ? (
@@ -412,153 +335,93 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
                           ) : (
                             <ShieldAlert className="w-3 h-3" />
                           )}
-                          {snap.firewallSummary.engine.toUpperCase()}{' '}
-                          {snap.firewallSummary.active ? '已启用' : '未启用'}
+                          {snap.firewallSummary.engine.toUpperCase()}
                         </span>
-                        <span className="text-slate-500 font-mono">
-                          公网端口 {snap.firewallSummary.publicPortsCount} · 内网 {snap.firewallSummary.localPortsCount}
-                        </span>
+                        <span className="font-mono">公网 {snap.firewallSummary.publicPortsCount} 端口</span>
+                        {snap.networkSummary && snap.networkSummary.grade !== 'collecting' && (
+                          <span className="inline-flex items-center gap-1.5 text-slate-400">
+                            <span className={`w-1.5 h-1.5 rounded-full ${netDotColor(snap.networkSummary.grade)}`} />
+                            <span>丢包 {snap.networkSummary.maxLossPct}%</span>
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>
 
-                  {/* ZONE 3 (Secondary): Vitals & NodeQuality Verdict */}
-                  <div className="xl:col-span-3 pt-3.5 border-t border-white/[0.06] xl:pt-0 xl:border-t-0 xl:border-l xl:border-white/[0.06] xl:pl-5 space-y-3">
+                  {/* ZONE 3: Ultra-Clean Vitals & Quality Footer (4 cols) */}
+                  <div className="xl:col-span-4 xl:border-l xl:border-white/[0.05] xl:pl-5 space-y-2.5">
                     {snap.online && m ? (
                       <>
-                        <div className="space-y-2">
+                        <div className="space-y-1.5">
                           {[
-                            { label: 'CPU', pct: m.cpuPercent, sub: `负载 ${m.loadAvg[0]}` },
+                            { label: 'CPU', pct: m.cpuPercent, sub: `${m.cpuPercent.toFixed(1)}%` },
                             {
-                              label: '内存',
+                              label: 'MEM',
                               pct: m.memPercent,
-                              sub: `${formatBytes(m.memUsedBytes, 1)} / ${formatBytes(m.memTotalBytes, 1)}`,
+                              sub: `${formatBytes(m.memUsedBytes, 1)} / ${formatBytes(m.memTotalBytes, 0)}`,
                             },
                             {
-                              label: '磁盘 /',
+                              label: 'DISK',
                               pct: m.diskRootPercent,
                               sub: `${formatBytes(m.diskRootUsedBytes, 0)} / ${formatBytes(m.diskRootTotalBytes, 0)}`,
                             },
-                            ...(snap.trafficSummary && snap.trafficSummary.quotaBytes > 0
+                            ...(ts && ts.quotaBytes > 0
                               ? [
                                   {
-                                    label: '月流量',
-                                    pct: snap.trafficSummary.usedPercent,
-                                    sub: `${formatBytes(snap.trafficSummary.billedBytes, 1)} / ${formatBytes(snap.trafficSummary.quotaBytes, 0)}`,
+                                    label: '流量',
+                                    pct: ts.usedPercent,
+                                    sub: `${formatBytes(ts.billedBytes, 1)} / ${formatBytes(ts.quotaBytes, 0)}`,
                                   },
                                 ]
                               : []),
                           ].map((row) => (
-                            <div key={row.label}>
-                              <div className="flex items-center justify-between text-[11px] mb-1">
-                                <span className="text-slate-400">{row.label}</span>
-                                <span className="font-mono text-[10px] text-slate-500">{row.sub}</span>
-                                <span className={`font-mono font-semibold ${usageTextColor(row.pct)}`}>
-                                  {row.pct.toFixed(0)}%
-                                </span>
-                              </div>
-                              <div className="h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
+                            <div key={row.label} className="grid grid-cols-12 items-center gap-2 text-[10px] font-mono">
+                              <span className="col-span-2 text-slate-500">{row.label}</span>
+                              <div className="col-span-6 h-[3px] bg-white/[0.06] rounded-full overflow-hidden">
                                 <div
-                                  className={`h-full rounded-full transition-all ${usageBarColor(row.pct)}`}
+                                  className={`h-full rounded-full transition-all duration-500 ${usageBarColor(row.pct)}`}
                                   style={{ width: `${Math.min(100, Math.max(2, row.pct))}%` }}
                                 />
                               </div>
+                              <span className={`col-span-4 text-right truncate ${usageTextColor(row.pct)}`}>
+                                {row.sub}
+                              </span>
                             </div>
                           ))}
                         </div>
-                        {snap.trafficSummary && snap.trafficSummary.quotaBytes === 0 && (
-                          <div className="flex items-center justify-between gap-2 text-[10px] font-mono text-slate-500">
-                            <span>
-                              本月 ↓ {formatBytes(snap.trafficSummary.cycleRxBytes)} · ↑ {formatBytes(snap.trafficSummary.cycleTxBytes)}
-                            </span>
-                            {snap.trafficSummary.bandwidthMbps > 0 && (
-                              <span className="px-1.5 py-0.2 rounded bg-white/[0.04] border border-white/[0.07] text-sky-300">
-                                {snap.trafficSummary.bandwidthMbps}M
-                              </span>
-                            )}
-                          </div>
-                        )}
 
-                        {/* Proxy Quality & Line Stability Strip */}
-                        <div className="pt-2 border-t border-white/[0.06] space-y-2">
-                          {/* Live 24h Network Stability */}
-                          {netBadge && snap.networkSummary && (
-                            <div
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                onSelectServer(snap.server.id, 'network');
-                              }}
-                              className="flex items-center justify-between gap-2 group/net"
-                            >
-                              <div className="flex items-center gap-1.5 min-w-0">
-                                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border shrink-0 ${netBadge.cls}`}>
-                                  {netBadge.label}
-                                </span>
-                                <span className="text-[10px] font-mono text-slate-400 truncate">
-                                  丢包 {snap.networkSummary.maxLossPct}%
-                                  {snap.networkSummary.peakDeltaMs !== undefined
-                                    ? ` · 高峰 ${snap.networkSummary.peakDeltaMs >= 0 ? '+' : ''}${snap.networkSummary.peakDeltaMs}ms`
-                                    : ''}
-                                </span>
-                              </div>
-                              <ArrowUpRight className="w-3 h-3 text-slate-600 group-hover/net:text-sky-300 shrink-0" />
-                            </div>
-                          )}
-
-                          {/* NodeQuality & Key Unlocks */}
-                          <div
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onSelectServer(snap.server.id, 'nodequality');
-                            }}
-                            className="flex items-start justify-between gap-2 group/nq"
-                          >
+                        {/* Compact 1-line Quality & Traffic Micro-footer */}
+                        <div className="flex items-center justify-between gap-2 pt-1 text-[10px] font-mono text-slate-500">
+                          <span className="truncate flex items-center gap-1.5">
                             {snap.activeNodeQualityJob ? (
-                              <div className="flex items-center gap-1.5 text-[11px] text-amber-300">
-                                <Activity className="w-3.5 h-3.5 animate-pulse shrink-0" />
-                                <span className="truncate">{snap.activeNodeQualityJob.phase}</span>
-                              </div>
+                              <span className="text-amber-300 inline-flex items-center gap-1">
+                                <Activity className="w-3 h-3 animate-pulse" />
+                                {snap.activeNodeQualityJob.phase}
+                              </span>
                             ) : nq ? (
-                              <div className="min-w-0 space-y-1.5">
-                                <div className="flex items-center gap-1.5 text-[11px]">
-                                  <Zap className="w-3 h-3 text-emerald-400 shrink-0" />
-                                  <span className="text-slate-200 font-medium truncate">
-                                    {countryFlag(nq.summary.ip.country)}{' '}
-                                    {nq.summary.ip.asn || 'NodeQuality'}{' '}
-                                    {nq.summary.ip.ipType ? `· ${nq.summary.ip.ipType}` : ''}
-                                  </span>
-                                </div>
-                                {keyUnlocks.length > 0 ? (
-                                  <div className="flex flex-wrap gap-1">
-                                    {keyUnlocks.map((u) => (
-                                      <span
-                                        key={u.service}
-                                        className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-300"
-                                      >
-                                        {countryFlag(u.region)} {u.service}
-                                      </span>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <div className="text-[10px] text-slate-500 font-mono">
-                                    {formatRelativeTime(nq.finishedAt || nq.startedAt)}
-                                  </div>
-                                )}
-                              </div>
+                              <>
+                                <Zap className="w-3 h-3 text-emerald-400/80 shrink-0" />
+                                <span className="text-slate-400 truncate">
+                                  {countryFlag(nq.summary.ip.country)} {nq.summary.ip.asn || 'NodeQuality'}
+                                  {nq.summary.ip.ipType ? ` · ${nq.summary.ip.ipType}` : ''}
+                                </span>
+                              </>
                             ) : (
-                              <div className="flex items-center gap-1.5 text-[11px] text-slate-400 group-hover/nq:text-sky-300">
-                                <Zap className="w-3 h-3" />
-                                <span>运行 NodeQuality 质检</span>
-                              </div>
+                              <span>未运行质检</span>
                             )}
-                            <ArrowUpRight className="w-3.5 h-3.5 text-slate-500 group-hover/nq:text-sky-300 shrink-0 mt-0.5" />
-                          </div>
+                          </span>
+
+                          {ts && ts.quotaBytes === 0 && (
+                            <span className="shrink-0">
+                              本月 {formatBytes(ts.cycleRxBytes + ts.cycleTxBytes)}
+                              {ts.bandwidthMbps > 0 ? ` · ${ts.bandwidthMbps}M` : ''}
+                            </span>
+                          )}
                         </div>
                       </>
                     ) : (
-                      <div className="text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-xl p-3">
-                        <div className="font-medium mb-1">节点离线</div>
-                        <div className="text-[11px] text-rose-300/80 break-all">{snap.error}</div>
+                      <div className="text-xs text-rose-400/90">
+                        节点离线 · <span className="font-mono text-[11px] text-rose-300/70">{snap.error}</span>
                       </div>
                     )}
                   </div>

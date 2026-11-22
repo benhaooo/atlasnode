@@ -369,11 +369,10 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
     }
   };
 
-  if (loading && !data) {
-    return <FirewallSkeleton />;
-  }
-
-  const publicPorts = data?.listeningPorts.filter((p) => p.scope === 'public') || [];
+  const publicPorts = useMemo(
+    () => data?.listeningPorts.filter((p) => p.scope === 'public') || [],
+    [data]
+  );
   const tailscalePorts = data?.listeningPorts.filter((p) => p.scope === 'tailscale') || [];
   const privatePorts = data?.listeningPorts.filter((p) => p.scope === 'private') || [];
   const localPorts = data?.listeningPorts.filter((p) => p.scope === 'local') || [];
@@ -397,14 +396,6 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
       });
   }, [publicPorts, data]);
 
-  const blockedCount = evaluatedPublicPorts.filter((x) => x.verdict.status === 'blocked').length;
-  const exposedCount = evaluatedPublicPorts.length - blockedCount;
-  const visiblePublicPorts = evaluatedPublicPorts.filter((x) => {
-    if (portFilter === 'blocked') return x.verdict.status === 'blocked';
-    if (portFilter === 'exposed') return x.verdict.status !== 'blocked';
-    return true;
-  });
-
   // Map ruleKey -> list of matched port numbers so rules show live hit badges
   const ruleMatchedPorts = useMemo(() => {
     const mp = new Map<string, number[]>();
@@ -417,6 +408,18 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
     }
     return mp;
   }, [evaluatedPublicPorts]);
+
+  if (loading && !data) {
+    return <FirewallSkeleton />;
+  }
+
+  const blockedCount = evaluatedPublicPorts.filter((x) => x.verdict.status === 'blocked').length;
+  const exposedCount = evaluatedPublicPorts.length - blockedCount;
+  const visiblePublicPorts = evaluatedPublicPorts.filter((x) => {
+    if (portFilter === 'blocked') return x.verdict.status === 'blocked';
+    if (portFilter === 'exposed') return x.verdict.status !== 'blocked';
+    return true;
+  });
 
   const handleQuickAllowPort = (p: ListeningPort) => {
     const proto = normProto(p.proto) || 'tcp';

@@ -14,6 +14,28 @@ export function formatSpeed(bytesPerSec: number): string {
   return `${(bytesPerSec / (1024 * 1024 * 1024)).toFixed(2)} GB/s`;
 }
 
+export function formatMbps(bytesPerSec: number): string {
+  if (!Number.isFinite(bytesPerSec) || bytesPerSec <= 0) return '0 Mbps';
+  const bitsPerSec = bytesPerSec * 8;
+  if (bitsPerSec < 1_000_000) return `${Math.round(bitsPerSec / 1000)} Kbps`;
+  if (bitsPerSec < 100_000_000) return `${(bitsPerSec / 1_000_000).toFixed(1)} Mbps`;
+  if (bitsPerSec < 1_000_000_000) return `${Math.round(bitsPerSec / 1_000_000)} Mbps`;
+  return `${(bitsPerSec / 1_000_000_000).toFixed(2)} Gbps`;
+}
+
+export function billingModeLabel(mode?: string): string {
+  switch (mode) {
+    case 'tx':
+      return '仅出站计费';
+    case 'rx':
+      return '仅入站计费';
+    case 'max':
+      return '取收发大值';
+    default:
+      return '双向合计';
+  }
+}
+
 export function formatUptime(seconds?: number): string {
   if (!seconds || seconds <= 0) return '—';
   const days = Math.floor(seconds / 86400);

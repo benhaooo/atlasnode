@@ -24,6 +24,8 @@ import type {
   SshSecurityInfo,
   SystemdService,
   TailscalePeer,
+  TrafficBillingMode,
+  TrafficSummary,
 } from './types';
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -74,6 +76,21 @@ export const api = {
     request<{ server: ServerConfig }>('/api/servers', { method: 'POST', body: JSON.stringify(payload) }),
   updateServer: (id: string, payload: Partial<ServerConfig>) =>
     request<{ server: ServerConfig }>(`/api/servers/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  saveTrafficPlan: (
+    id: string,
+    payload: {
+      bandwidthMbps: number;
+      monthlyQuotaGb: number;
+      billingMode: TrafficBillingMode;
+      resetDay: number;
+      calibrateUsedGb?: number | null;
+      clearBaseline?: boolean;
+    }
+  ) =>
+    request<{ server: ServerConfig; trafficSummary: TrafficSummary }>(`/api/servers/${id}/traffic-plan`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
   deleteServer: (id: string) => request<{ ok: boolean }>(`/api/servers/${id}`, { method: 'DELETE' }),
   testServer: (payload: Partial<ServerConfig>) =>
     request<{ ok: boolean; hostname?: string; os?: string; error?: string }>('/api/servers/test', {

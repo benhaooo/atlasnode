@@ -46,13 +46,172 @@ func initMetricsDB() error {
 			PRIMARY KEY (server_id, ts)
 		);
 		CREATE INDEX IF NOT EXISTS idx_metric_samples_ts ON metric_samples (ts);
+		CREATE TABLE IF NOT EXISTS traffic_daily (
+			server_id TEXT NOT NULL,
+			day TEXT NOT NULL,
+			rx_bytes INTEGER NOT NULL DEFAULT 0,
+			tx_bytes INTEGER NOT NULL DEFAULT 0,
+			peak_rx_bps REAL NOT NULL DEFAULT 0,
+			peak_tx_bps REAL NOT NULL DEFAULT 0,
+			PRIMARY KEY (server_id, day)
+		);
+		CREATE TABLE IF NOT EXISTS traffic_cursor (
+			server_id TEXT PRIMARY KEY,
+			last_ts INTEGER NOT NULL,
+			last_rx INTEGER NOT NULL,
+			last_tx INTEGER NOT NULL
+		);
 	`)
 	if err != nil {
 		_ = db.Close()
 		return err
 	}
+	backfillTrafficDailyLocked(db)
 	metricsDB = db
 	return nil
+}
+
+func backfillTrafficDailyLocked(db *sql.DB) {
+	idRows, err := db.Query(`
+		SELECT DISTINCT server_id FROM metric_samples
+		WHERE server_id NOT IN (SELECT server_id FROM traffic_cursor)
+	`)
+	if err != nil {
+		return
+	}
+	var serverIDs []string
+	for idRows.Next() {
+		var sid string
+		if idRows.Scan(&sid) == nil && sid != "" {
+			serverIDs = append(serverIDs, sid)
+		}
+	}
+	_ = idRows.Close()
+
+	type dayAgg struct {
+		rx, tx         int64
+		peakRx, peakTx float64
+	}
+	for _, sid := range serverIDs {
+		rows, err := db.Query(`
+			SELECT ts, rx_bps, tx_bps, rx_total, tx_total
+			FROM metric_samples
+			WHERE server_id = ?
+			ORDER BY ts ASC
+		`, sid)
+		if err != nil {
+			continue
+		}
+		daily := map[string]*dayAgg{}
+		var havePrev bool
+		var lastTs, lastRx, lastTx int64
+		for rows.Next() {
+			var ts, rxTotal, txTotal int64
+			var rxBps, txBps float64
+			if rows.Scan(&ts, &rxBps, &txBps, &rxTotal, &txTotal) != nil {
+				continue
+			}
+			day := time.UnixMilli(ts).In(time.Local).Format("2006-01-02")
+			agg := daily[day]
+			if agg == nil {
+				agg = &dayAgg{}
+				daily[day] = agg
+			}
+			if rxBps > agg.peakRx {
+				agg.peakRx = rxBps
+			}
+			if txBps > agg.peakTx {
+				agg.peakTx = txBps
+			}
+			if havePrev {
+				drx := rxTotal - lastRx
+				if drx < 0 {
+					drx = rxTotal
+				}
+				dtx := txTotal - lastTx
+				if dtx < 0 {
+					dtx = txTotal
+				}
+				agg.rx += drx
+				agg.tx += dtx
+			}
+			havePrev = true
+			lastTs, lastRx, lastTx = ts, rxTotal, txTotal
+		}
+		_ = rows.Close()
+		if !havePrev {
+			continue
+		}
+		for day, agg := range daily {
+			_, _ = db.Exec(`
+				INSERT INTO traffic_daily (server_id, day, rx_bytes, tx_bytes, peak_rx_bps, peak_tx_bps)
+				VALUES (?, ?, ?, ?, ?, ?)
+				ON CONFLICT(server_id, day) DO UPDATE SET
+					rx_bytes = rx_bytes + excluded.rx_bytes,
+					tx_bytes = tx_bytes + excluded.tx_bytes,
+					peak_rx_bps = MAX(peak_rx_bps, excluded.peak_rx_bps),
+					peak_tx_bps = MAX(peak_tx_bps, excluded.peak_tx_bps)
+			`, sid, day, agg.rx, agg.tx, agg.peakRx, agg.peakTx)
+		}
+		_, _ = db.Exec(`
+			INSERT OR REPLACE INTO traffic_cursor (server_id, last_ts, last_rx, last_tx)
+			VALUES (?, ?, ?, ?)
+		`, sid, lastTs, lastRx, lastTx)
+	}
+}
+
+func recordTrafficDelta(serverID string, m LiveMetrics) {
+	if metricsDB == nil {
+		if err := initMetricsDB(); err != nil {
+			return
+		}
+	}
+	metricsDBMu.Lock()
+	defer metricsDBMu.Unlock()
+	if metricsDB == nil || m.Timestamp <= 0 {
+		return
+	}
+	day := time.UnixMilli(m.Timestamp).In(time.Local).Format("2006-01-02")
+	var lastTs, lastRx, lastTx int64
+	err := metricsDB.QueryRow(`SELECT last_ts, last_rx, last_tx FROM traffic_cursor WHERE server_id = ?`, serverID).
+		Scan(&lastTs, &lastRx, &lastTx)
+	if err == sql.ErrNoRows {
+		_, _ = metricsDB.Exec(`
+			INSERT INTO traffic_daily (server_id, day, rx_bytes, tx_bytes, peak_rx_bps, peak_tx_bps)
+			VALUES (?, ?, 0, 0, ?, ?)
+			ON CONFLICT(server_id, day) DO UPDATE SET
+				peak_rx_bps = MAX(peak_rx_bps, excluded.peak_rx_bps),
+				peak_tx_bps = MAX(peak_tx_bps, excluded.peak_tx_bps)
+		`, serverID, day, m.NetRxBps, m.NetTxBps)
+		_, _ = metricsDB.Exec(`
+			INSERT OR REPLACE INTO traffic_cursor (server_id, last_ts, last_rx, last_tx)
+			VALUES (?, ?, ?, ?)
+		`, serverID, m.Timestamp, m.NetTotalRxBytes, m.NetTotalTxBytes)
+		return
+	}
+	if err != nil || m.Timestamp <= lastTs {
+		return
+	}
+	drx := m.NetTotalRxBytes - lastRx
+	if drx < 0 {
+		drx = m.NetTotalRxBytes
+	}
+	dtx := m.NetTotalTxBytes - lastTx
+	if dtx < 0 {
+		dtx = m.NetTotalTxBytes
+	}
+	_, _ = metricsDB.Exec(`
+		INSERT INTO traffic_daily (server_id, day, rx_bytes, tx_bytes, peak_rx_bps, peak_tx_bps)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT(server_id, day) DO UPDATE SET
+			rx_bytes = rx_bytes + excluded.rx_bytes,
+			tx_bytes = tx_bytes + excluded.tx_bytes,
+			peak_rx_bps = MAX(peak_rx_bps, excluded.peak_rx_bps),
+			peak_tx_bps = MAX(peak_tx_bps, excluded.peak_tx_bps)
+	`, serverID, day, drx, dtx, m.NetRxBps, m.NetTxBps)
+	_, _ = metricsDB.Exec(`
+		UPDATE traffic_cursor SET last_ts = ?, last_rx = ?, last_tx = ? WHERE server_id = ?
+	`, m.Timestamp, m.NetTotalRxBytes, m.NetTotalTxBytes, serverID)
 }
 
 func insertMetricSample(serverID string, m LiveMetrics) {
@@ -77,6 +236,214 @@ func insertMetricSample(serverID string, m LiveMetrics) {
 		m.NetTotalRxBytes,
 		m.NetTotalTxBytes,
 	)
+	recordTrafficDelta(serverID, m)
+}
+
+func pruneOldDailyTraffic(retentionDays int) {
+	if metricsDB == nil {
+		return
+	}
+	cutoffDay := time.Now().In(time.Local).AddDate(0, 0, -retentionDays).Format("2006-01-02")
+	_, _ = metricsDB.Exec(`DELETE FROM traffic_daily WHERE day < ?`, cutoffDay)
+}
+
+func normalizeTrafficPlan(p *TrafficPlan) TrafficPlan {
+	out := TrafficPlan{
+		BillingMode: "both",
+		ResetDay:    1,
+	}
+	if p == nil {
+		return out
+	}
+	if p.BandwidthMbps > 0 {
+		out.BandwidthMbps = p.BandwidthMbps
+	}
+	if p.MonthlyQuotaGB > 0 {
+		out.MonthlyQuotaGB = p.MonthlyQuotaGB
+	}
+	switch p.BillingMode {
+	case "both", "tx", "rx", "max":
+		out.BillingMode = p.BillingMode
+	}
+	if p.ResetDay >= 1 && p.ResetDay <= 28 {
+		out.ResetDay = p.ResetDay
+	}
+	if p.BaselineGB > 0 {
+		out.BaselineGB = p.BaselineGB
+	}
+	out.BaselineCycleKey = p.BaselineCycleKey
+	return out
+}
+
+func computeBillingCycle(now time.Time, resetDay int) (start, end time.Time, daysElapsed, daysTotal, daysRemaining int) {
+	local := now.In(time.Local)
+	if resetDay < 1 || resetDay > 28 {
+		resetDay = 1
+	}
+	y, m, d := local.Date()
+	if d >= resetDay {
+		start = time.Date(y, m, resetDay, 0, 0, 0, 0, time.Local)
+		end = start.AddDate(0, 1, 0)
+	} else {
+		end = time.Date(y, m, resetDay, 0, 0, 0, 0, time.Local)
+		start = end.AddDate(0, -1, 0)
+	}
+	today := time.Date(y, m, d, 0, 0, 0, 0, time.Local)
+	daysTotal = int(math.Round(end.Sub(start).Hours() / 24))
+	if daysTotal < 28 {
+		daysTotal = 30
+	}
+	daysElapsed = int(math.Round(today.Sub(start).Hours()/24)) + 1
+	if daysElapsed < 1 {
+		daysElapsed = 1
+	}
+	daysRemaining = daysTotal - daysElapsed
+	if daysRemaining < 0 {
+		daysRemaining = 0
+	}
+	return
+}
+
+func computeBilledBytes(rx, tx, baseline int64, mode string) int64 {
+	var tracked int64
+	switch mode {
+	case "tx":
+		tracked = tx
+	case "rx":
+		tracked = rx
+	case "max":
+		if rx > tx {
+			tracked = rx
+		} else {
+			tracked = tx
+		}
+	default:
+		tracked = rx + tx
+	}
+	return tracked + baseline
+}
+
+const bytesPerGB = float64(1024 * 1024 * 1024)
+
+func getServerTrafficSummary(srv ServerConfig) *TrafficSummary {
+	if metricsDB == nil {
+		_ = initMetricsDB()
+	}
+	plan := normalizeTrafficPlan(srv.TrafficPlan)
+	now := time.Now().In(time.Local)
+	start, end, daysElapsed, daysTotal, daysRemaining := computeBillingCycle(now, plan.ResetDay)
+	cycleStartStr := start.Format("2006-01-02")
+	cycleEndStr := end.Format("2006-01-02")
+	todayStr := now.Format("2006-01-02")
+
+	dayMap := map[string]DailyTrafficPoint{}
+	var firstTrackedDay string
+	if metricsDB != nil {
+		rows, err := metricsDB.Query(`
+			SELECT day, rx_bytes, tx_bytes, peak_rx_bps, peak_tx_bps
+			FROM traffic_daily
+			WHERE server_id = ? AND day >= ? AND day < ?
+			ORDER BY day ASC
+		`, srv.ID, cycleStartStr, cycleEndStr)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var pt DailyTrafficPoint
+				if rows.Scan(&pt.Day, &pt.RxBytes, &pt.TxBytes, &pt.PeakRxBps, &pt.PeakTxBps) == nil {
+					if firstTrackedDay == "" {
+						firstTrackedDay = pt.Day
+					}
+					dayMap[pt.Day] = pt
+				}
+			}
+		}
+	}
+
+	var cycleRx, cycleTx, todayRx, todayTx int64
+	var peakRx, peakTx float64
+	dailySeries := make([]DailyTrafficPoint, 0, daysElapsed)
+	for cur := start; !cur.After(now); cur = cur.AddDate(0, 0, 1) {
+		key := cur.Format("2006-01-02")
+		pt, ok := dayMap[key]
+		if !ok {
+			pt = DailyTrafficPoint{Day: key}
+		}
+		cycleRx += pt.RxBytes
+		cycleTx += pt.TxBytes
+		if pt.PeakRxBps > peakRx {
+			peakRx = pt.PeakRxBps
+		}
+		if pt.PeakTxBps > peakTx {
+			peakTx = pt.PeakTxBps
+		}
+		if key == todayStr {
+			todayRx = pt.RxBytes
+			todayTx = pt.TxBytes
+		}
+		dailySeries = append(dailySeries, pt)
+	}
+
+	var baselineBytes int64
+	if plan.BaselineGB > 0 && (plan.BaselineCycleKey == "" || plan.BaselineCycleKey == cycleStartStr) {
+		baselineBytes = int64(math.Round(plan.BaselineGB * bytesPerGB))
+	}
+
+	billedBytes := computeBilledBytes(cycleRx, cycleTx, baselineBytes, plan.BillingMode)
+	var quotaBytes int64
+	var usedPct float64
+	if plan.MonthlyQuotaGB > 0 {
+		quotaBytes = int64(math.Round(plan.MonthlyQuotaGB * bytesPerGB))
+		if quotaBytes > 0 {
+			usedPct = round1(float64(billedBytes) / float64(quotaBytes) * 100.0)
+		}
+	}
+
+	// Estimate end-of-cycle projected usage carefully (handles mid-cycle onboarding without distortion)
+	fracToday := float64(now.Hour()*60+now.Minute()) / 1440.0
+	var projectedBytes int64
+	if baselineBytes > 0 {
+		elapsedFrac := float64(daysElapsed-1) + fracToday
+		if elapsedFrac < 0.5 {
+			elapsedFrac = 0.5
+		}
+		projectedBytes = int64(math.Round(float64(billedBytes) / elapsedFrac * float64(daysTotal)))
+	} else if firstTrackedDay != "" {
+		firstT, err := time.ParseInLocation("2006-01-02", firstTrackedDay, time.Local)
+		if err != nil || firstT.Before(start) {
+			firstT = start
+		}
+		todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+		obsDays := math.Round(todayStart.Sub(firstT).Hours()/24) + fracToday
+		if obsDays < 0.5 {
+			obsDays = 0.5
+		}
+		remFrac := float64(daysRemaining) + (1.0 - fracToday)
+		dailyRate := float64(billedBytes) / obsDays
+		projectedBytes = billedBytes + int64(math.Round(dailyRate*remFrac))
+	}
+
+	return &TrafficSummary{
+		CycleStart:     cycleStartStr,
+		CycleEnd:       cycleEndStr,
+		DaysElapsed:    daysElapsed,
+		DaysTotal:      daysTotal,
+		DaysRemaining:  daysRemaining,
+		TodayRxBytes:   todayRx,
+		TodayTxBytes:   todayTx,
+		CycleRxBytes:   cycleRx,
+		CycleTxBytes:   cycleTx,
+		BaselineBytes:  baselineBytes,
+		BilledBytes:    billedBytes,
+		QuotaBytes:     quotaBytes,
+		UsedPercent:    usedPct,
+		ProjectedBytes: projectedBytes,
+		PeakRxBps:      round1(peakRx),
+		PeakTxBps:      round1(peakTx),
+		BandwidthMbps:  plan.BandwidthMbps,
+		BillingMode:    plan.BillingMode,
+		ResetDay:       plan.ResetDay,
+		DailySeries:    dailySeries,
+	}
 }
 
 func pruneOldSamples(retentionDays int) {
@@ -263,6 +630,7 @@ func startBackgroundSampler(interval time.Duration) {
 					tick()
 				case <-pruneTicker.C:
 					pruneOldSamples(7)
+					pruneOldDailyTraffic(400)
 				}
 			}
 		}()

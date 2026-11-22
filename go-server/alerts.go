@@ -22,10 +22,11 @@ func defaultAlertConfig() AlertConfig {
 		Enabled:         false,
 		CooldownMinutes: 60,
 		Thresholds: AlertThresholds{
-			DiskPercent:  88,
-			CPUPercent:   92,
-			MemPercent:   92,
-			OfflineAlert: true,
+			DiskPercent:    88,
+			CPUPercent:     92,
+			MemPercent:     92,
+			TrafficPercent: 85,
+			OfflineAlert:   true,
 		},
 	}
 }
@@ -187,6 +188,22 @@ func evaluateServerAlerts(srv ServerConfig, metrics *LiveMetrics, offlineErr str
 				kind: "mem",
 				msg:  fmt.Sprintf("节点 [%s] 内存占用已达 %.1f%%", srv.Name, metrics.MemPercent),
 			})
+		}
+		if cfg.Thresholds.TrafficPercent > 0 && srv.TrafficPlan != nil && srv.TrafficPlan.MonthlyQuotaGB > 0 {
+			if ts := getServerTrafficSummary(srv); ts != nil && ts.QuotaBytes > 0 && ts.UsedPercent >= cfg.Thresholds.TrafficPercent {
+				usedGB := float64(ts.BilledBytes) / bytesPerGB
+				candidates = append(candidates, cand{
+					kind: "traffic",
+					msg: fmt.Sprintf(
+						"节点 [%s] 本周期月流量已用 %.1f%%（%.1f GB / %.0f GB，距重置剩 %d 天）",
+						srv.Name,
+						ts.UsedPercent,
+						usedGB,
+						srv.TrafficPlan.MonthlyQuotaGB,
+						ts.DaysRemaining,
+					),
+				})
+			}
 		}
 	}
 

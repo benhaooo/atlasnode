@@ -16,6 +16,15 @@ type QuickLink struct {
 	AutoDetected bool   `json:"autoDetected,omitempty"`
 }
 
+type TrafficPlan struct {
+	BandwidthMbps    int     `json:"bandwidthMbps,omitempty"`
+	MonthlyQuotaGB   float64 `json:"monthlyQuotaGb,omitempty"`
+	BillingMode      string  `json:"billingMode,omitempty"` // "both" | "tx" | "rx" | "max"
+	ResetDay         int     `json:"resetDay,omitempty"`    // 1-28, default 1
+	BaselineGB       float64 `json:"baselineGb,omitempty"`
+	BaselineCycleKey string  `json:"baselineCycleKey,omitempty"` // "YYYY-MM-DD" of cycleStart
+}
+
 type ServerConfig struct {
 	ID          string          `json:"id"`
 	Name        string          `json:"name"`
@@ -32,6 +41,7 @@ type ServerConfig struct {
 	TailscaleIP string          `json:"tailscaleIp,omitempty"`
 	JumpHost    *JumpHostConfig `json:"jumpHost,omitempty"`
 	QuickLinks  []QuickLink     `json:"quickLinks"`
+	TrafficPlan *TrafficPlan    `json:"trafficPlan,omitempty"`
 	CreatedAt   string          `json:"createdAt"`
 }
 
@@ -226,10 +236,11 @@ type MeshLatencyCell struct {
 }
 
 type AlertThresholds struct {
-	DiskPercent  float64 `json:"diskPercent"`
-	CPUPercent   float64 `json:"cpuPercent"`
-	MemPercent   float64 `json:"memPercent"`
-	OfflineAlert bool    `json:"offlineAlert"`
+	DiskPercent    float64 `json:"diskPercent"`
+	CPUPercent     float64 `json:"cpuPercent"`
+	MemPercent     float64 `json:"memPercent"`
+	TrafficPercent float64 `json:"trafficPercent"`
+	OfflineAlert   bool    `json:"offlineAlert"`
 }
 
 type AlertTelegram struct {
@@ -598,6 +609,37 @@ type AutoNQConfig struct {
 	AlertOnDegrade bool   `json:"alertOnDegrade"`
 }
 
+type DailyTrafficPoint struct {
+	Day       string  `json:"day"`
+	RxBytes   int64   `json:"rxBytes"`
+	TxBytes   int64   `json:"txBytes"`
+	PeakRxBps float64 `json:"peakRxBps"`
+	PeakTxBps float64 `json:"peakTxBps"`
+}
+
+type TrafficSummary struct {
+	CycleStart     string              `json:"cycleStart"`
+	CycleEnd       string              `json:"cycleEnd"`
+	DaysElapsed    int                 `json:"daysElapsed"`
+	DaysTotal      int                 `json:"daysTotal"`
+	DaysRemaining  int                 `json:"daysRemaining"`
+	TodayRxBytes   int64               `json:"todayRxBytes"`
+	TodayTxBytes   int64               `json:"todayTxBytes"`
+	CycleRxBytes   int64               `json:"cycleRxBytes"`
+	CycleTxBytes   int64               `json:"cycleTxBytes"`
+	BaselineBytes  int64               `json:"baselineBytes"`
+	BilledBytes    int64               `json:"billedBytes"`
+	QuotaBytes     int64               `json:"quotaBytes"`
+	UsedPercent    float64             `json:"usedPercent"`
+	ProjectedBytes int64               `json:"projectedBytes"`
+	PeakRxBps      float64             `json:"peakRxBps"`
+	PeakTxBps      float64             `json:"peakTxBps"`
+	BandwidthMbps  int                 `json:"bandwidthMbps"`
+	BillingMode    string              `json:"billingMode"`
+	ResetDay       int                 `json:"resetDay"`
+	DailySeries    []DailyTrafficPoint `json:"dailySeries,omitempty"`
+}
+
 type ServerSnapshot struct {
 	Server               ServerConfig        `json:"server"`
 	Online               bool                `json:"online"`
@@ -624,6 +666,7 @@ type ServerSnapshot struct {
 	LatestNodeQuality    *LatestNQSummary    `json:"latestNodeQuality,omitempty"`
 	ActiveNodeQualityJob *ActiveNQJobInfo    `json:"activeNodeQualityJob,omitempty"`
 	NetworkSummary       *NetworkHealthBrief `json:"networkSummary,omitempty"`
+	TrafficSummary       *TrafficSummary     `json:"trafficSummary,omitempty"`
 	CollectedAt          string              `json:"collectedAt"`
 }
 

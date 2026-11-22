@@ -791,6 +791,7 @@ func collectServerSnapshot(srv ServerConfig, activeJob *ActiveNQJobInfo) ServerS
 			DetectedLinks:        []QuickLink{},
 			LatestNodeQuality:    latestSummary,
 			ActiveNodeQualityJob: activeJob,
+			TrafficSummary:       getServerTrafficSummary(srv),
 			CollectedAt:          nowStr,
 		}
 	}
@@ -883,6 +884,9 @@ func collectServerSnapshot(srv ServerConfig, activeJob *ActiveNQJobInfo) ServerS
 	if raw.Metrics != nil && raw.Metrics.TopProcesses == nil {
 		raw.Metrics.TopProcesses = []ProcessMetric{}
 	}
+	if raw.Metrics != nil {
+		recordTrafficDelta(srv.ID, *raw.Metrics)
+	}
 
 	nqIP := ""
 	if latestNQ != nil {
@@ -929,6 +933,7 @@ func collectServerSnapshot(srv ServerConfig, activeJob *ActiveNQJobInfo) ServerS
 		LatestNodeQuality:    latestSummary,
 		ActiveNodeQualityJob: activeJob,
 		NetworkSummary:       getServerNetworkBrief(srv.ID),
+		TrafficSummary:       getServerTrafficSummary(srv),
 		CollectedAt:          nowStr,
 	}
 }

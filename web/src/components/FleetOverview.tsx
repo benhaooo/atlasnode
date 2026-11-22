@@ -108,6 +108,15 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
         tab: 'network',
       });
     }
+    if (s.trafficSummary && s.trafficSummary.quotaBytes > 0 && s.trafficSummary.usedPercent >= 85) {
+      alerts.push({
+        serverId: s.server.id,
+        serverName: s.server.name,
+        message: `本月流量已用 ${s.trafficSummary.usedPercent.toFixed(0)}%（${formatBytes(s.trafficSummary.billedBytes)} / ${formatBytes(s.trafficSummary.quotaBytes, 0)}）`,
+        severity: s.trafficSummary.usedPercent >= 95 ? 'danger' : 'warn',
+        tab: 'overview',
+      });
+    }
   }
 
   const netGradeMeta = (grade?: string) => {
@@ -430,6 +439,15 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
                               pct: m.diskRootPercent,
                               sub: `${formatBytes(m.diskRootUsedBytes, 0)} / ${formatBytes(m.diskRootTotalBytes, 0)}`,
                             },
+                            ...(snap.trafficSummary && snap.trafficSummary.quotaBytes > 0
+                              ? [
+                                  {
+                                    label: '月流量',
+                                    pct: snap.trafficSummary.usedPercent,
+                                    sub: `${formatBytes(snap.trafficSummary.billedBytes, 1)} / ${formatBytes(snap.trafficSummary.quotaBytes, 0)}`,
+                                  },
+                                ]
+                              : []),
                           ].map((row) => (
                             <div key={row.label}>
                               <div className="flex items-center justify-between text-[11px] mb-1">
@@ -448,6 +466,18 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
                             </div>
                           ))}
                         </div>
+                        {snap.trafficSummary && snap.trafficSummary.quotaBytes === 0 && (
+                          <div className="flex items-center justify-between gap-2 text-[10px] font-mono text-slate-500">
+                            <span>
+                              本月 ↓ {formatBytes(snap.trafficSummary.cycleRxBytes)} · ↑ {formatBytes(snap.trafficSummary.cycleTxBytes)}
+                            </span>
+                            {snap.trafficSummary.bandwidthMbps > 0 && (
+                              <span className="px-1.5 py-0.2 rounded bg-white/[0.04] border border-white/[0.07] text-sky-300">
+                                {snap.trafficSummary.bandwidthMbps}M
+                              </span>
+                            )}
+                          </div>
+                        )}
 
                         {/* Proxy Quality & Line Stability Strip */}
                         <div className="pt-2 border-t border-white/[0.06] space-y-2">

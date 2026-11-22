@@ -20,7 +20,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { api } from '../api';
-import type { LiveMetrics, ServerConfig, ServerSnapshot } from '../types';
+import type { LiveMetrics, ServerConfig, ServerSnapshot, TrafficSummary } from '../types';
 import { copyToClipboard, formatUptime, serverFlag } from '../utils';
 import { OverviewTab } from './OverviewTab';
 import { ServicesTab } from './ServicesTab';
@@ -50,6 +50,7 @@ interface ServerDetailProps {
   onLiveMetrics?: (serverId: string, metrics: LiveMetrics) => void;
   onRefreshSnapshot: () => void;
   onServerUpdated: (server: ServerConfig) => void;
+  onTrafficPlanSaved?: (server: ServerConfig, summary: TrafficSummary) => void;
   onServerDeleted: () => void;
 }
 
@@ -93,6 +94,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
   onLiveMetrics,
   onRefreshSnapshot,
   onServerUpdated,
+  onTrafficPlanSaved,
   onServerDeleted,
 }) => {
   const [activeTab, setActiveTab] = useState<ServerTab>(initialTab);
@@ -499,6 +501,7 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
                 onNavigateTab={switchTab}
                 onJumpFolder={jumpToFolder}
                 onServerUpdated={onServerUpdated}
+                onTrafficPlanSaved={onTrafficPlanSaved}
               />
             )}
             {activeTab === 'services' && (

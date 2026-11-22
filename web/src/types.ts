@@ -14,6 +14,48 @@ export interface QuickLink {
   autoDetected?: boolean;
 }
 
+export type TrafficBillingMode = 'both' | 'tx' | 'rx' | 'max';
+
+export interface TrafficPlan {
+  bandwidthMbps?: number;
+  monthlyQuotaGb?: number;
+  billingMode?: TrafficBillingMode;
+  resetDay?: number;
+  baselineGb?: number;
+  baselineCycleKey?: string;
+}
+
+export interface DailyTrafficPoint {
+  day: string;
+  rxBytes: number;
+  txBytes: number;
+  peakRxBps: number;
+  peakTxBps: number;
+}
+
+export interface TrafficSummary {
+  cycleStart: string;
+  cycleEnd: string;
+  daysElapsed: number;
+  daysTotal: number;
+  daysRemaining: number;
+  todayRxBytes: number;
+  todayTxBytes: number;
+  cycleRxBytes: number;
+  cycleTxBytes: number;
+  baselineBytes: number;
+  billedBytes: number;
+  quotaBytes: number;
+  usedPercent: number;
+  projectedBytes: number;
+  peakRxBps: number;
+  peakTxBps: number;
+  bandwidthMbps: number;
+  billingMode: TrafficBillingMode;
+  resetDay: number;
+  dailySeries?: DailyTrafficPoint[];
+}
+
 export interface ServerConfig {
   id: string;
   name: string;
@@ -30,6 +72,7 @@ export interface ServerConfig {
   tailscaleIp?: string;
   jumpHost?: JumpHostConfig;
   quickLinks: QuickLink[];
+  trafficPlan?: TrafficPlan;
   createdAt: string;
 }
 
@@ -194,6 +237,7 @@ export interface AlertConfig {
     diskPercent: number;
     cpuPercent: number;
     memPercent: number;
+    trafficPercent: number;
     offlineAlert: boolean;
   };
   telegram: { enabled: boolean; botToken: string; chatId: string };
@@ -515,6 +559,7 @@ export interface ServerSnapshot {
     startedAt: string;
   };
   networkSummary?: NetworkHealthBrief;
+  trafficSummary?: TrafficSummary;
   collectedAt: string;
 }
 

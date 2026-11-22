@@ -15,6 +15,7 @@ const DEFAULT_ALERTS: AlertConfig = {
     diskPercent: 85,
     cpuPercent: 90,
     memPercent: 90,
+    trafficPercent: 85,
     offlineAlert: true,
   },
   telegram: { enabled: false, botToken: '', chatId: '' },
@@ -280,7 +281,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
               {/* Thresholds */}
               <div className="space-y-2.5">
                 <div className="font-semibold text-slate-200">触发阈值与冷却</div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
                   <label className="bg-[#090b10] border border-white/[0.06] rounded-xl p-2.5 space-y-1">
                     <span className="text-[10px] text-slate-400 block">磁盘告警 (%)</span>
                     <input
@@ -324,6 +325,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ onClose }) => {
                         setAlertCfg({
                           ...alertCfg,
                           thresholds: { ...alertCfg.thresholds, memPercent: Number(e.target.value) },
+                        })
+                      }
+                      className="w-full bg-[#0f131b] border border-white/10 rounded px-2 py-1 font-mono text-white focus:border-sky-400 focus:outline-none"
+                    />
+                  </label>
+                  <label className="bg-[#090b10] border border-white/[0.06] rounded-xl p-2.5 space-y-1">
+                    <span className="text-[10px] text-slate-400 block">月流量告警 (%)</span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={alertCfg.thresholds.trafficPercent ?? 85}
+                      onChange={(e) =>
+                        setAlertCfg({
+                          ...alertCfg,
+                          thresholds: { ...alertCfg.thresholds, trafficPercent: Number(e.target.value) },
                         })
                       }
                       className="w-full bg-[#0f131b] border border-white/10 rounded px-2 py-1 font-mono text-white focus:border-sky-400 focus:outline-none"

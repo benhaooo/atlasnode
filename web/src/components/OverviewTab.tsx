@@ -1,34 +1,48 @@
 import React, { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowUp,
   ArrowUpRight,
+  BarChart3,
   Box,
   ChevronDown,
   ChevronRight,
   Cpu,
   ExternalLink,
   FolderOpen,
+  Gauge,
   HardDrive,
   Network,
   Plus,
   Shield,
   ShieldAlert,
+  SlidersHorizontal,
   Trash2,
   X,
   Zap,
 } from 'lucide-react';
 import { api } from '../api';
-import type { LiveMetrics, MetricHistoryResult, QuickLink, ServerConfig, ServerSnapshot } from '../types';
+import type {
+  LiveMetrics,
+  MetricHistoryResult,
+  QuickLink,
+  ServerConfig,
+  ServerSnapshot,
+  TrafficSummary,
+} from '../types';
 import {
+  billingModeLabel,
   countryFlag,
   formatBytes,
+  formatMbps,
   formatRelativeTime,
   formatSpeed,
   usageBarColor,
   usageTextColor,
 } from '../utils';
 import { Sparkline } from './Sparkline';
+import { TrafficPlanModal } from './TrafficPlanModal';
 import type { ServerTab } from './ServerDetail';
 
 interface OverviewTabProps {
@@ -38,6 +52,7 @@ interface OverviewTabProps {
   onNavigateTab: (tab: ServerTab) => void;
   onJumpFolder: (dirPath: string) => void;
   onServerUpdated: (server: ServerConfig) => void;
+  onTrafficPlanSaved?: (server: ServerConfig, summary: TrafficSummary) => void;
 }
 
 export const OverviewTab: React.FC<OverviewTabProps> = ({
@@ -47,12 +62,15 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
   onNavigateTab,
   onJumpFolder,
   onServerUpdated,
+  onTrafficPlanSaved,
 }) => {
   const [showSpecs, setShowSpecs] = useState(false);
   const [addingLink, setAddingLink] = useState(false);
   const [linkForm, setLinkForm] = useState({ name: '', url: '', description: '' });
   const [chartRange, setChartRange] = useState<'live' | '1h' | '24h' | '7d'>('live');
   const [dbHistory, setDbHistory] = useState<MetricHistoryResult | null>(null);
+  const [editingTrafficPlan, setEditingTrafficPlan] = useState(false);
+  const [showDailyTraffic, setShowDailyTraffic] = useState(false);
 
   useEffect(() => {
     if (chartRange === 'live') return;
@@ -74,7 +92,14 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
   const m = metrics || snapshot.metrics;
   const nq = snapshot.latestNodeQuality;
+  const ts = snapshot.trafficSummary;
   const allLinks = [...snapshot.server.quickLinks, ...snapshot.detectedLinks];
+
+  const liveMaxBps = Math.max(m?.netRxBps || 0, m?.netTxBps || 0);
+  const liveMaxMbps = (liveMaxBps * 8) / 1_000_000;
+  const bwCapMbps = ts?.bandwidthMbps || snapshot.server.trafficPlan?.bandwidthMbps || 0;
+  const bwUtilPct = bwCapMbps > 0 ? Math.min(100, (liveMaxMbps / bwCapMbps) * 100) : 0;
+  const projectedOverQuota = Boolean(ts && ts.quotaBytes > 0 && ts.projectedBytes > ts.quotaBytes);
 
   const handleAddLink = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -210,6 +235,27 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                   { data: txSeries, color: '#38bdf8' },
                 ]}
               />
+              {(bwCapMbps > 0 || (ts && (ts.peakRxBps > 0 || ts.peakTxBps > 0))) && (
+                <div className="mt-2 pt-1.5 border-t border-white/[0.05] flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-[10px] font-mono text-slate-500">
+                  {bwCapMbps > 0 ? (
+                    <span className="text-slate-400">
+                      限速 <span className="text-sky-300">{bwCapMbps}M</span>
+                      {chartRange === 'live' && (
+                        <>
+                          {' '}· 当前 {formatMbps(liveMaxBps)} ({bwUtilPct.toFixed(0)}%)
+                        </>
+                      )}
+                    </span>
+                  ) : (
+                    <span className="text-slate-500">本周期峰值</span>
+                  )}
+                  {ts && (ts.peakRxBps > 0 || ts.peakTxBps > 0) && (
+                    <span className="text-slate-400">
+                      峰值 ↓{formatMbps(ts.peakRxBps)} · ↑{formatMbps(ts.peakTxBps)}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
@@ -259,9 +305,177 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                   />
                 </div>
                 <div className="text-[10px] font-mono text-slate-500 mt-1">
-                  累计流量 ↓ {formatBytes(m.netTotalRxBytes)} · ↑ {formatBytes(m.netTotalTxBytes)}
+                  本次开机累计 ↓ {formatBytes(m.netTotalRxBytes)} · ↑ {formatBytes(m.netTotalTxBytes)}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Monthly Traffic Quota & Bandwidth Plan */}
+          {ts && (
+            <div className="pt-3.5 border-t border-white/[0.06] space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="text-slate-300 font-medium flex items-center gap-1.5">
+                    <Gauge className="w-3.5 h-3.5 text-sky-400" />
+                    本月流量
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-500">
+                    {ts.cycleStart.slice(5)} ~ {ts.cycleEnd.slice(5)}
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/[0.05] text-slate-400 border border-white/[0.06]">
+                    {billingModeLabel(ts.billingMode)}
+                  </span>
+                  <span className="text-[10px] font-mono text-slate-500">
+                    距 {ts.resetDay} 号重置剩 {ts.daysRemaining} 天
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  {ts.dailySeries && ts.dailySeries.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowDailyTraffic((v) => !v)}
+                      className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md border transition-colors cursor-pointer ${
+                        showDailyTraffic
+                          ? 'bg-sky-500/15 border-sky-400/30 text-sky-300'
+                          : 'bg-white/[0.03] border-white/[0.07] text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      <BarChart3 className="w-3 h-3" />
+                      <span>每日</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setEditingTrafficPlan(true)}
+                    className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-md bg-sky-500/10 hover:bg-sky-500/20 border border-sky-400/25 text-sky-300 transition-colors cursor-pointer"
+                  >
+                    <SlidersHorizontal className="w-3 h-3" />
+                    <span>{ts.quotaBytes > 0 || bwCapMbps > 0 ? '调整套餐 / 校准' : '设置带宽与流量包'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {ts.quotaBytes > 0 ? (
+                <div className="space-y-1.5">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2 text-xs">
+                    <span className="font-mono text-slate-200">
+                      已用 <span className="font-semibold text-white">{formatBytes(ts.billedBytes)}</span>
+                      {' / '}
+                      {formatBytes(ts.quotaBytes, 0)}
+                    </span>
+                    <div className="flex items-center gap-2 font-mono">
+                      {projectedOverQuota && (
+                        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-400/30 text-amber-300">
+                          <AlertTriangle className="w-2.5 h-2.5" />
+                          按当前速率预计月底 {formatBytes(ts.projectedBytes, 0)}
+                        </span>
+                      )}
+                      <span className={`font-semibold ${usageTextColor(ts.usedPercent)}`}>
+                        {ts.usedPercent.toFixed(1)}%
+                      </span>
+                    </div>
+                  </div>
+                  <div className="h-2 bg-white/[0.06] rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${usageBarColor(ts.usedPercent)}`}
+                      style={{ width: `${Math.min(100, Math.max(1.5, ts.usedPercent))}%` }}
+                    />
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[10px] font-mono text-slate-500">
+                    <span>
+                      今日 ↓ {formatBytes(ts.todayRxBytes)} · ↑ {formatBytes(ts.todayTxBytes)}
+                    </span>
+                    <span>
+                      本周期采集 ↓ {formatBytes(ts.cycleRxBytes)} · ↑ {formatBytes(ts.cycleTxBytes)}
+                      {ts.baselineBytes > 0 && (
+                        <span className="text-sky-400/90"> · 含校准 +{formatBytes(ts.baselineBytes)}</span>
+                      )}
+                    </span>
+                    {!projectedOverQuota && ts.projectedBytes > 0 && (
+                      <span>预计月底 {formatBytes(ts.projectedBytes)}</span>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 bg-[#090b10] border border-white/[0.06] rounded-xl px-3 py-2 text-[11px] font-mono">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-slate-300">
+                    <span>
+                      本周期累计{' '}
+                      <span className="text-emerald-400">↓ {formatBytes(ts.cycleRxBytes)}</span>
+                      {' · '}
+                      <span className="text-sky-400">↑ {formatBytes(ts.cycleTxBytes)}</span>
+                    </span>
+                    <span className="text-slate-500">
+                      今日 ↓ {formatBytes(ts.todayRxBytes)} · ↑ {formatBytes(ts.todayTxBytes)}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-slate-500">
+                    {bwCapMbps > 0 ? `标称带宽 ${bwCapMbps} Mbps · 不限月流量` : '未设月配额（已自动累计）'}
+                  </span>
+                </div>
+              )}
+
+              {/* Expandable Daily Traffic Bar Chart */}
+              {showDailyTraffic && ts.dailySeries && ts.dailySeries.length > 0 && (() => {
+                const maxDayBytes = Math.max(
+                  1,
+                  ...ts.dailySeries.map((d) => d.rxBytes + d.txBytes)
+                );
+                return (
+                  <div className="bg-[#090b10] border border-white/[0.06] rounded-xl p-3 space-y-2">
+                    <div className="flex items-center justify-between text-[10px] font-mono text-slate-500">
+                      <span>本周期每日流量（{ts.dailySeries.length} 天）</span>
+                      <div className="flex items-center gap-3">
+                        <span className="inline-flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-xs bg-emerald-400/80" />
+                          入站 ↓
+                        </span>
+                        <span className="inline-flex items-center gap-1">
+                          <span className="w-2 h-2 rounded-xs bg-sky-400/80" />
+                          出站 ↑
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-end gap-1 h-20 pt-1">
+                      {ts.dailySeries.map((d) => {
+                        const total = d.rxBytes + d.txBytes;
+                        const totalPct = total > 0 ? Math.max(6, (total / maxDayBytes) * 100) : 2;
+                        const rxRatio = total > 0 ? (d.rxBytes / total) * 100 : 50;
+                        const txRatio = 100 - rxRatio;
+                        const tip = `${d.day}\n入站 ↓ ${formatBytes(d.rxBytes)}\n出站 ↑ ${formatBytes(d.txBytes)}\n峰值 ↓ ${formatMbps(d.peakRxBps)} / ↑ ${formatMbps(d.peakTxBps)}`;
+                        return (
+                          <div
+                            key={d.day}
+                            title={tip}
+                            className="flex-1 min-w-[4px] h-full flex flex-col justify-end group/bar"
+                          >
+                            <div
+                              className="w-full rounded-t-xs overflow-hidden flex flex-col justify-end bg-white/[0.04] group-hover/bar:brightness-125 transition-all"
+                              style={{ height: `${totalPct}%` }}
+                            >
+                              {total > 0 && (
+                                <>
+                                  <div className="w-full bg-sky-400/80" style={{ height: `${txRatio}%` }} />
+                                  <div className="w-full bg-emerald-400/80" style={{ height: `${rxRatio}%` }} />
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex justify-between text-[9px] font-mono text-slate-600">
+                      <span>{ts.dailySeries[0].day.slice(5)}</span>
+                      {ts.dailySeries.length > 2 && (
+                        <span>{ts.dailySeries[Math.floor(ts.dailySeries.length / 2)].day.slice(5)}</span>
+                      )}
+                      <span>{ts.dailySeries[ts.dailySeries.length - 1].day.slice(5)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
         </section>
@@ -757,6 +971,21 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
           </div>
         )}
       </section>
+
+      {editingTrafficPlan && (
+        <TrafficPlanModal
+          server={snapshot.server}
+          summary={ts}
+          onClose={() => setEditingTrafficPlan(false)}
+          onSaved={(server, summary) => {
+            if (onTrafficPlanSaved) {
+              onTrafficPlanSaved(server, summary);
+            } else {
+              onServerUpdated(server);
+            }
+          }}
+        />
+      )}
     </div>
   );
 };

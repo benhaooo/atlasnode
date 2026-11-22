@@ -227,6 +227,7 @@ func main() {
 			TailscaleIP: firstNonEmpty(body.TailscaleIP, func() string { if existing != nil { return existing.TailscaleIP }; return "" }()),
 			JumpHost:    jh,
 			QuickLinks:  ql,
+			TrafficPlan: func() *TrafficPlan { if existing != nil { return existing.TrafficPlan }; return nil }(),
 			CreatedAt:   createdAt,
 		}
 		upsertServer(srv)
@@ -334,9 +335,81 @@ func main() {
 				updated.QuickLinks = ql
 			}
 		}
+		if v, ok := body["trafficPlan"]; ok {
+			if strings.TrimSpace(string(v)) == "null" {
+				updated.TrafficPlan = nil
+			} else {
+				var tp TrafficPlan
+				if json.Unmarshal(v, &tp) == nil {
+					norm := normalizeTrafficPlan(&tp)
+					updated.TrafficPlan = &norm
+				}
+			}
+		}
 		upsertServer(updated)
 		snapshotCache.Invalidate(updated.ID)
 		writeJSON(w, http.StatusOK, map[string]any{"server": updated})
+	}))
+
+	mux.HandleFunc("PUT /api/servers/{id}/traffic-plan", requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		existing := getServerByID(r.PathValue("id"))
+		if existing == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "服务器不存在"})
+			return
+		}
+		var body struct {
+			BandwidthMbps   int      `json:"bandwidthMbps"`
+			MonthlyQuotaGB  float64  `json:"monthlyQuotaGb"`
+			BillingMode     string   `json:"billingMode"`
+			ResetDay        int      `json:"resetDay"`
+			CalibrateUsedGB *float64 `json:"calibrateUsedGb"`
+			ClearBaseline   bool     `json:"clearBaseline"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "无效的流量套餐参数"})
+			return
+		}
+		prev := normalizeTrafficPlan(existing.TrafficPlan)
+		next := normalizeTrafficPlan(&TrafficPlan{
+			BandwidthMbps:    body.BandwidthMbps,
+			MonthlyQuotaGB:   body.MonthlyQuotaGB,
+			BillingMode:      body.BillingMode,
+			ResetDay:         body.ResetDay,
+			BaselineGB:       prev.BaselineGB,
+			BaselineCycleKey: prev.BaselineCycleKey,
+		})
+		if body.ClearBaseline {
+			next.BaselineGB = 0
+			next.BaselineCycleKey = ""
+		}
+		if body.CalibrateUsedGB != nil && *body.CalibrateUsedGB >= 0 {
+			// Compute tracked usage in the target billing cycle/mode without baseline, then store exact delta
+			tempSrv := *existing
+			noBase := next
+			noBase.BaselineGB = 0
+			noBase.BaselineCycleKey = ""
+			tempSrv.TrafficPlan = &noBase
+			ts := getServerTrafficSummary(tempSrv)
+			trackedGB := float64(ts.BilledBytes) / bytesPerGB
+			delta := *body.CalibrateUsedGB - trackedGB
+			if delta < 0 {
+				delta = 0
+			}
+			next.BaselineGB = round2(delta)
+			next.BaselineCycleKey = ts.CycleStart
+		}
+		updated := *existing
+		if next.BandwidthMbps == 0 && next.MonthlyQuotaGB == 0 && next.BaselineGB == 0 && next.BillingMode == "both" && next.ResetDay == 1 {
+			updated.TrafficPlan = nil
+		} else {
+			updated.TrafficPlan = &next
+		}
+		upsertServer(updated)
+		snapshotCache.Invalidate(updated.ID)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"server":         updated,
+			"trafficSummary": getServerTrafficSummary(updated),
+		})
 	}))
 
 	mux.HandleFunc("DELETE /api/servers/{id}", requireAuth(func(w http.ResponseWriter, r *http.Request) {

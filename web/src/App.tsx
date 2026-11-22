@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from './api';
-import type { LiveMetrics, ServerConfig, ServerSnapshot } from './types';
+import type { LiveMetrics, ServerConfig, ServerSnapshot, TrafficSummary } from './types';
 import { LoginScreen } from './components/LoginScreen';
 import { Sidebar } from './components/Sidebar';
 import { FleetOverview } from './components/FleetOverview';
@@ -242,6 +242,14 @@ export default function App() {
     );
   };
 
+  const handleTrafficPlanSaved = useCallback((updated: ServerConfig, trafficSummary: TrafficSummary) => {
+    setSnapshots((prev) =>
+      prev.map((s) =>
+        s.server.id === updated.id ? { ...s, server: updated, trafficSummary } : s
+      )
+    );
+  }, []);
+
   const handleLiveMetrics = useCallback((serverId: string, metrics: LiveMetrics) => {
     liveMetricsAtRef.current[serverId] = Date.now();
     setSnapshots((prev) =>
@@ -370,6 +378,7 @@ export default function App() {
             onLiveMetrics={handleLiveMetrics}
             onRefreshSnapshot={() => refreshSingleSnapshot(activeSnapshot.server.id)}
             onServerUpdated={handleServerUpdated}
+            onTrafficPlanSaved={handleTrafficPlanSaved}
             onServerDeleted={() => {
               applyRoute({ viewMode: 'overview', selectedId: null, tab: 'overview' }, true);
               fetchFleet();

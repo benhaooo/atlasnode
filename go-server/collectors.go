@@ -976,7 +976,26 @@ if docker_ok:
 
 svcs = []
 seen = set()
-skip = ('systemd-', 'dbus', 'getty', 'serial-getty', 'user@', 'polkit', 'udisks', 'ModemManager', 'networkd-', 'unattended-', 'multipathd', 'irqbalance', 'packagekit', 'fwupd', 'accounts-', 'avahi-', 'acpid', 'atd', 'cloud-init', 'chrony', 'auditd', 'rsyslog', 'rpcbind', 'snapd', 'console-', 'plymouth', 'networking', 'ufw', 'apparmor', 'e2scrub', 'fstrim', 'logrotate', 'man-db', 'apt-', 'dpkg-', 'motd-', 'ua-', 'ubuntu-', 'sysstat', 'setvtrgb', 'kmod', 'keyboard-', 'blk-availability', 'lvm2-', 'dm-', 'multipath', 'finalrd', 'grub-', 'rc-local', 'ondemand', 'irqbalance', 'qemu-guest-agent')
+skip = (
+    'systemd-', 'dbus', 'getty', 'serial-getty', 'user@', 'polkit', 'udisks', 'ModemManager',
+    'networkd-', 'unattended-', 'multipathd', 'multipath', 'irqbalance', 'packagekit', 'fwupd',
+    'accounts-', 'avahi-', 'acpid', 'atd', 'cloud-init', 'cloud-config', 'cloud-final',
+    'chrony', 'auditd', 'rsyslog', 'rpcbind', 'snapd', 'snap.', 'console-', 'plymouth',
+    'networking', 'ufw', 'apparmor', 'e2scrub', 'fstrim', 'logrotate', 'man-db', 'apt-',
+    'dpkg-', 'motd-', 'ua-', 'ubuntu-', 'sysstat', 'setvtrgb', 'kmod', 'keyboard-',
+    'blk-availability', 'lvm2-', 'dm-', 'finalrd', 'grub-', 'rc-local', 'ondemand',
+    'qemu-guest-agent', 'open-iscsi', 'iscsi', 'open-vm-tools', 'vmtoolsd', 'vgauth',
+    'thermald', 'apport', 'pollinate', 'dmesg', 'secureboot-', 'tat_agent', 'qcloud',
+    'barad_agent', 'sgagent', 'aliyun', 'aegis', 'AssistDaemon', 'waagent', 'amazon-ssm',
+    'oracle-cloud', 'google-', 'vbox', 'hv_', 'bluetooth', 'cups', 'upower', 'colord',
+    'rtkit', 'geoclue', 'boltd', 'power-profiles',
+)
+known_distro_apps = (
+    'nginx', 'caddy', 'apache2', 'httpd', 'haproxy', 'mysql', 'mysqld', 'mariadb',
+    'postgresql', 'redis', 'mongod', 'memcached', 'docker', 'tailscaled', 'xray', 'v2ray',
+    'sing-box', 'hysteria', 'mihomo', 'clash', 'frps', 'frpc', 'gost', 'snell', 'realm',
+    'shadowsocks', 'trojan', 'wg-quick', 'fail2ban',
+)
 for line in run(['systemctl', 'list-units', '--type=service', '--state=running,failed', '--no-pager', '--no-legend', '--plain']).splitlines():
     p = line.split(None, 4)
     if len(p) < 5: continue
@@ -986,12 +1005,14 @@ for line in run(['systemctl', 'list-units', '--type=service', '--state=running,f
     seen.add(short)
     svcs.append({'name': short, 'description': desc, 'activeState': active, 'subState': sub})
 
-# Also include stopped custom/enabled services so users can start them back up
+# Also include stopped user-installed services (/etc/systemd/system non-symlinks) & well-known server daemons
 import os
 cand_units = []
 try:
     for fn in sorted(os.listdir('/etc/systemd/system')):
         if not fn.endswith('.service') or '@' in fn: continue
+        full = os.path.join('/etc/systemd/system', fn)
+        if os.path.islink(full): continue
         if any(fn.startswith(s) for s in skip): continue
         short = fn[:-8]
         if short not in seen:
@@ -1005,6 +1026,8 @@ for line in run(['systemctl', 'list-unit-files', '--type=service', '--state=enab
     if not fn.endswith('.service') or '@' in fn: continue
     if any(fn.startswith(s) for s in skip): continue
     short = fn[:-8]
+    if not any(short == k or short.startswith(k + '-') for k in known_distro_apps):
+        continue
     if short not in seen and short not in cand_units:
         cand_units.append(short)
 

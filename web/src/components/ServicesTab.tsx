@@ -76,7 +76,8 @@ const INFRA_SYSTEMD = new Set([
   'ssh', 'sshd', 'docker', 'containerd', 'tailscaled', 'cron', 'crond',
   'fail2ban', 'ufw', 'nftables', 'firewalld', 'iptables', 'netfilter-persistent',
   'chronyd', 'ntp', 'ntpd', 'rsyslog', 'syslog-ng', 'auditd', 'haveged',
-  'rngd', 'smartd', 'lm-sensors', 'monit', 'open-vm-tools', 'vmtoolsd',
+  'rngd', 'smartd', 'lm-sensors', 'monit', 'open-vm-tools', 'vmtoolsd', 'vgauth',
+  'open-iscsi', 'thermald', 'apport', 'pollinate', 'tat_agent', 'barad_agent', 'sgagent',
 ]);
 
 function cleanTargetSuiteName(target: string): string {
@@ -1280,7 +1281,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                               </span>
                             </button>
                             <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-indigo-500/12 border border-indigo-400/25 text-indigo-300 shrink-0">
-                              {suite.managedContainers.length > 0 ? '宿主机 + 容器套件' : '宿主机套件'}
+                              {suite.managedContainers.length > 0 ? '本机 + 容器套件' : '本机套件'}
                             </span>
                             <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border shrink-0 ${statusTone.pill}`}>
                               {statusTone.label}
@@ -1765,7 +1766,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
                           {svc.name}
                         </span>
                         <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-indigo-500/12 border border-indigo-400/25 text-indigo-300">
-                          宿主机
+                          本机服务
                         </span>
                         <span
                           className={`text-[10px] font-mono px-1.5 py-0.2 rounded-full border ${

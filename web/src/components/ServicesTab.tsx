@@ -159,7 +159,7 @@ export const ServicesTab: React.FC<ServicesTabProps> = ({
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dir, action }),
+          body: JSON.stringify({ dir, project, action }),
         }
       );
       if (!res.ok || !res.body) {

@@ -544,18 +544,76 @@ exit 1
 	return out, nil
 }
 
-func spawnComposeAction(srv ServerConfig, composeDir, action string) (*StreamProcess, error) {
-	cmd := "docker compose up -d"
-	switch action {
-	case "pull_up":
-		cmd = "docker compose pull && docker compose up -d"
-	case "restart":
-		cmd = "docker compose restart"
-	case "stop":
-		cmd = "docker compose stop"
-	}
-	script := fmt.Sprintf("set -e\ncd \"$1\"\necho \"[AtlasNode] $PWD -> %s\"\n%s 2>&1\n", cmd, cmd)
-	return spawnScriptStream(srv, script, ExecOpts{Args: []string{composeDir}, Sudo: true})
+func spawnComposeAction(srv ServerConfig, composeDir, project, action string) (*StreamProcess, error) {
+	script := `set -e
+DIR="$1"
+PROJ="$2"
+ACTION="$3"
+cd "$DIR"
+
+COMPOSE_CMD=""
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE_CMD="docker compose"
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE_CMD="docker-compose"
+else
+  for cand in /usr/local/bin/docker-compose /usr/bin/docker-compose /usr/libexec/docker/cli-plugins/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose "$HOME/.docker/cli-plugins/docker-compose"; do
+    if [ -x "$cand" ]; then
+      COMPOSE_CMD="$cand"
+      break
+    fi
+  done
+fi
+
+if [ -n "$COMPOSE_CMD" ]; then
+  case "$ACTION" in
+    pull_up)
+      echo "[AtlasNode] $PWD -> $COMPOSE_CMD pull && $COMPOSE_CMD up -d"
+      $COMPOSE_CMD pull 2>&1 && $COMPOSE_CMD up -d 2>&1
+      ;;
+    restart)
+      echo "[AtlasNode] $PWD -> $COMPOSE_CMD restart"
+      $COMPOSE_CMD restart 2>&1
+      ;;
+    stop)
+      echo "[AtlasNode] $PWD -> $COMPOSE_CMD stop"
+      $COMPOSE_CMD stop 2>&1
+      ;;
+    *)
+      echo "[AtlasNode] $PWD -> $COMPOSE_CMD up -d"
+      $COMPOSE_CMD up -d 2>&1
+      ;;
+  esac
+  exit 0
+fi
+
+# Fallback when host only has docker CLI without compose plugin
+CIDS=""
+if [ -n "$PROJ" ]; then
+  CIDS=$(docker ps -aq --filter "label=com.docker.compose.project=$PROJ" 2>/dev/null || true)
+fi
+if [ -z "$CIDS" ]; then
+  CIDS=$(docker ps -aq --filter "label=com.docker.compose.project.working_dir=$DIR" 2>/dev/null || true)
+fi
+
+case "$ACTION" in
+  stop|restart|up)
+    if [ -z "$CIDS" ]; then
+      echo "[AtlasNode] 未找到 docker compose / docker-compose 命令，且未匹配到该栈容器" >&2
+      exit 127
+    fi
+    SUB="$ACTION"
+    [ "$SUB" = "up" ] && SUB="start"
+    echo "[AtlasNode] 未检测到 compose 插件，自动回退为 docker $SUB 整栈容器..."
+    echo "$CIDS" | xargs -r docker "$SUB" 2>&1
+    ;;
+  *)
+    echo "[AtlasNode] 未找到 docker compose 或 docker-compose 命令，请先安装 docker-compose-plugin（如 apt install docker-compose-plugin）" >&2
+    exit 127
+    ;;
+esac
+`
+	return spawnScriptStream(srv, script, ExecOpts{Args: []string{composeDir, project, action}, Sudo: true})
 }
 
 type KeySyncResult struct {

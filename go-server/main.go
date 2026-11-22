@@ -1154,8 +1154,9 @@ func main() {
 			return
 		}
 		var body struct {
-			Dir    string `json:"dir"`
-			Action string `json:"action"`
+			Dir     string `json:"dir"`
+			Project string `json:"project"`
+			Action  string `json:"action"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		dir := strings.TrimSpace(body.Dir)
@@ -1167,7 +1168,7 @@ func main() {
 		if action != "pull_up" && action != "up" && action != "restart" && action != "stop" {
 			action = "up"
 		}
-		proc, err := spawnComposeAction(*srv, dir, action)
+		proc, err := spawnComposeAction(*srv, dir, strings.TrimSpace(body.Project), action)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return

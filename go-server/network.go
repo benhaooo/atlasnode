@@ -1236,6 +1236,47 @@ func downsampleProbes(rows []NetworkProbeSample, maxPoints int) []NetworkProbeSa
 	return out
 }
 
+func getServerNetworkBrief(serverID string) *NetworkHealthBrief {
+	mon := queryNetworkMonitor(serverID, "24h")
+	totalSamples := 0
+	lossSum := 0.0
+	lossCount := 0
+	maxLoss := 0.0
+	var maxPeakDelta *float64
+	for _, t := range mon.Targets {
+		totalSamples += t.Overall.Samples
+		if t.Overall.Samples > 0 {
+			lossSum += t.Overall.LossPct
+			lossCount++
+			if t.Overall.LossPct > maxLoss {
+				maxLoss = t.Overall.LossPct
+			}
+		}
+		if t.Peak.Samples > 0 && t.Peak.LossPct > maxLoss {
+			maxLoss = t.Peak.LossPct
+		}
+		if t.PeakDeltaMs != nil {
+			if maxPeakDelta == nil || *t.PeakDeltaMs > *maxPeakDelta {
+				v := *t.PeakDeltaMs
+				maxPeakDelta = &v
+			}
+		}
+	}
+	avgLoss := 0.0
+	if lossCount > 0 {
+		avgLoss = round1(lossSum / float64(lossCount))
+	}
+	return &NetworkHealthBrief{
+		Mode:        mon.ModeConfig.Mode,
+		Grade:       mon.Verdict.Grade,
+		Headline:    mon.Verdict.Headline,
+		AvgLossPct:  avgLoss,
+		MaxLossPct:  round1(maxLoss),
+		PeakDeltaMs: maxPeakDelta,
+		Samples:     totalSamples,
+	}
+}
+
 func queryNetworkMonitor(serverID, rng string) NetworkMonitorResponse {
 	if metricsDB == nil {
 		_ = initNetworkDB()

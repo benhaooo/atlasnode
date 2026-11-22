@@ -1,6 +1,7 @@
 import type {
   AlertConfig,
   AlertEvent,
+  AutoNQConfig,
   DiskAuditData,
   DockerContainer,
   FileEntry,
@@ -110,6 +111,12 @@ export const api = {
     request<{ ok: boolean }>(`/api/servers/${id}/nodequality/cancel`, { method: 'POST' }),
   deleteNodeQuality: (id: string, runId: string) =>
     request<{ ok: boolean }>(`/api/servers/${id}/nodequality/${encodeURIComponent(runId)}`, { method: 'DELETE' }),
+  getNodeQualitySchedule: () => request<{ config: AutoNQConfig }>('/api/nodequality/schedule'),
+  saveNodeQualitySchedule: (config: AutoNQConfig) =>
+    request<{ ok: boolean; config: AutoNQConfig }>('/api/nodequality/schedule', {
+      method: 'PUT',
+      body: JSON.stringify({ config }),
+    }),
 
   getFirewall: (id: string) => request<{ firewall: FirewallData }>(`/api/servers/${id}/firewall`),
   addUfwRule: (

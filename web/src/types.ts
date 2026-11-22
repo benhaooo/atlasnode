@@ -446,6 +446,23 @@ export interface NodeQualityRun {
   };
 }
 
+export interface NetworkHealthBrief {
+  mode: 'off' | 'routine' | 'inspect';
+  grade: 'excellent' | 'good' | 'degraded' | 'poor' | 'collecting';
+  headline: string;
+  avgLossPct: number;
+  maxLossPct: number;
+  peakDeltaMs?: number;
+  samples: number;
+}
+
+export interface AutoNQConfig {
+  enabled: boolean;
+  intervalDays: number;
+  mode: NodeQualityMode;
+  alertOnDegrade: boolean;
+}
+
 export interface ServerSnapshot {
   server: ServerConfig;
   online: boolean;
@@ -495,6 +512,7 @@ export interface ServerSnapshot {
     phase: string;
     startedAt: string;
   };
+  networkSummary?: NetworkHealthBrief;
   collectedAt: string;
 }
 

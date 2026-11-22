@@ -420,23 +420,74 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         </section>
       </div>
 
-      {/* TIER 2: NodeQuality Executive Digest (6 cols) + Security Exposure & Top Processes (6 cols) */}
+      {/* TIER 2: Proxy & Node Quality Digest (6 cols) + Security Exposure & Top Processes (6 cols) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-        {/* NodeQuality Executive Digest */}
+        {/* Proxy & Node Quality Digest */}
         <section className="lg:col-span-6 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 flex flex-col justify-between gap-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <Zap className="w-4 h-4 text-emerald-400" />
-              <h2 className="text-sm font-semibold text-white">NodeQuality 质量结论</h2>
+              <h2 className="text-sm font-semibold text-white">代理与节点质量结论</h2>
             </div>
-            <button
-              onClick={() => onNavigateTab('nodequality')}
-              className="text-xs text-sky-400 hover:text-sky-300 flex items-center gap-1 cursor-pointer"
-            >
-              <span>{nq ? '完整报告 / 重测' : '立即测试'}</span>
-              <ArrowUpRight className="w-3.5 h-3.5" />
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => onNavigateTab('network')}
+                className="text-xs text-slate-300 hover:text-sky-300 flex items-center gap-0.5 cursor-pointer"
+              >
+                <span>线路监控</span>
+                <ArrowUpRight className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => onNavigateTab('nodequality')}
+                className="text-xs text-sky-400 hover:text-sky-300 flex items-center gap-0.5 cursor-pointer"
+              >
+                <span>{nq ? '质检报告' : '立即质检'}</span>
+                <ArrowUpRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
+
+          {/* 24h Live Line Stability Ribbon */}
+          {snapshot.networkSummary && (
+            <button
+              onClick={() => onNavigateTab('network')}
+              className={`w-full text-left rounded-xl px-3.5 py-2.5 border flex flex-wrap items-center justify-between gap-2 transition-colors cursor-pointer ${
+                snapshot.networkSummary.grade === 'excellent'
+                  ? 'bg-emerald-500/[0.06] border-emerald-500/25 hover:border-emerald-400/40'
+                  : snapshot.networkSummary.grade === 'good'
+                    ? 'bg-sky-500/[0.06] border-sky-400/25 hover:border-sky-400/40'
+                    : snapshot.networkSummary.grade === 'degraded'
+                      ? 'bg-amber-500/[0.06] border-amber-400/25 hover:border-amber-400/40'
+                      : snapshot.networkSummary.grade === 'poor'
+                        ? 'bg-rose-500/[0.08] border-rose-500/30 hover:border-rose-400/45'
+                        : 'bg-[#090b10] border-white/[0.06] hover:border-white/15'
+              }`}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <Network className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                <span className="text-xs font-medium text-white truncate">
+                  {snapshot.networkSummary.headline}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 text-[10px] font-mono text-slate-400 shrink-0">
+                {snapshot.networkSummary.samples > 0 ? (
+                  <>
+                    <span>24h 丢包 {snapshot.networkSummary.maxLossPct}%</span>
+                    {snapshot.networkSummary.peakDeltaMs !== undefined && (
+                      <span>
+                        晚高峰 {snapshot.networkSummary.peakDeltaMs >= 0 ? '+' : ''}
+                        {snapshot.networkSummary.peakDeltaMs}ms
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <span>
+                    {snapshot.networkSummary.mode === 'off' ? '后台探测已关闭' : '等待样本积累'}
+                  </span>
+                )}
+              </div>
+            </button>
+          )}
 
           {nq ? (
             <div className="space-y-4">

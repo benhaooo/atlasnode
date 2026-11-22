@@ -56,6 +56,7 @@ func main() {
 	}
 	startBackgroundSampler(60 * time.Second)
 	startNetworkProbeSampler(60 * time.Second)
+	startAutoNodeQualityScheduler()
 	initialPassword := ensureAuthInitialized()
 
 	mux := http.NewServeMux()
@@ -1481,6 +1482,25 @@ func main() {
 		}
 		_ = saveNetworkTargets(clean)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "targets": loadNetworkTargets()})
+	}))
+
+	mux.HandleFunc("GET /api/nodequality/schedule", requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"config": loadAutoNQConfig()})
+	}))
+
+	mux.HandleFunc("PUT /api/nodequality/schedule", requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Config AutoNQConfig `json:"config"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "无效的定时复测配置"})
+			return
+		}
+		if err := saveAutoNQConfig(body.Config); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "config": loadAutoNQConfig()})
 	}))
 
 	// WebSSH Terminal WebSocket

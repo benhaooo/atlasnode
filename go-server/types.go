@@ -579,32 +579,50 @@ type LatestNQSummary struct {
 	Summary    NodeQualitySummary `json:"summary"`
 }
 
+type NetworkHealthBrief struct {
+	Mode        string   `json:"mode"`
+	Grade       string   `json:"grade"`
+	Headline    string   `json:"headline"`
+	AvgLossPct  float64  `json:"avgLossPct"`
+	MaxLossPct  float64  `json:"maxLossPct"`
+	PeakDeltaMs *float64 `json:"peakDeltaMs,omitempty"`
+	Samples     int      `json:"samples"`
+}
+
+type AutoNQConfig struct {
+	Enabled        bool   `json:"enabled"`
+	IntervalDays   int    `json:"intervalDays"`
+	Mode           string `json:"mode"`
+	AlertOnDegrade bool   `json:"alertOnDegrade"`
+}
+
 type ServerSnapshot struct {
-	Server               ServerConfig      `json:"server"`
-	Online               bool              `json:"online"`
-	Error                string            `json:"error,omitempty"`
-	Hostname             string            `json:"hostname,omitempty"`
-	OS                   string            `json:"os,omitempty"`
-	Kernel               string            `json:"kernel,omitempty"`
-	Arch                 string            `json:"arch,omitempty"`
-	CPUModel             string            `json:"cpuModel,omitempty"`
-	CPUCores             int               `json:"cpuCores,omitempty"`
-	PublicIP             string            `json:"publicIp,omitempty"`
-	TailscaleIP          string            `json:"tailscaleIp,omitempty"`
-	Metrics              *LiveMetrics      `json:"metrics,omitempty"`
-	Disks                []DiskMount       `json:"disks"`
-	Interfaces           []NetInterface    `json:"interfaces"`
-	DockerAvailable      bool              `json:"dockerAvailable"`
-	DockerSummary        DockerSummary     `json:"dockerSummary"`
-	ContainersPreview    []DockerContainer `json:"containersPreview"`
-	SystemdHighlights    []SystemdService  `json:"systemdHighlights"`
-	FirewallSummary      FirewallSummary   `json:"firewallSummary"`
-	PublicPortsPreview   []ListeningPort   `json:"publicPortsPreview"`
-	ComposeDirs          []ComposeDirInfo  `json:"composeDirs"`
-	DetectedLinks        []QuickLink       `json:"detectedLinks"`
-	LatestNodeQuality    *LatestNQSummary  `json:"latestNodeQuality,omitempty"`
-	ActiveNodeQualityJob *ActiveNQJobInfo  `json:"activeNodeQualityJob,omitempty"`
-	CollectedAt          string            `json:"collectedAt"`
+	Server               ServerConfig        `json:"server"`
+	Online               bool                `json:"online"`
+	Error                string              `json:"error,omitempty"`
+	Hostname             string              `json:"hostname,omitempty"`
+	OS                   string              `json:"os,omitempty"`
+	Kernel               string              `json:"kernel,omitempty"`
+	Arch                 string              `json:"arch,omitempty"`
+	CPUModel             string              `json:"cpuModel,omitempty"`
+	CPUCores             int                 `json:"cpuCores,omitempty"`
+	PublicIP             string              `json:"publicIp,omitempty"`
+	TailscaleIP          string              `json:"tailscaleIp,omitempty"`
+	Metrics              *LiveMetrics        `json:"metrics,omitempty"`
+	Disks                []DiskMount         `json:"disks"`
+	Interfaces           []NetInterface      `json:"interfaces"`
+	DockerAvailable      bool                `json:"dockerAvailable"`
+	DockerSummary        DockerSummary       `json:"dockerSummary"`
+	ContainersPreview    []DockerContainer   `json:"containersPreview"`
+	SystemdHighlights    []SystemdService    `json:"systemdHighlights"`
+	FirewallSummary      FirewallSummary     `json:"firewallSummary"`
+	PublicPortsPreview   []ListeningPort     `json:"publicPortsPreview"`
+	ComposeDirs          []ComposeDirInfo    `json:"composeDirs"`
+	DetectedLinks        []QuickLink         `json:"detectedLinks"`
+	LatestNodeQuality    *LatestNQSummary    `json:"latestNodeQuality,omitempty"`
+	ActiveNodeQualityJob *ActiveNQJobInfo    `json:"activeNodeQualityJob,omitempty"`
+	NetworkSummary       *NetworkHealthBrief `json:"networkSummary,omitempty"`
+	CollectedAt          string              `json:"collectedAt"`
 }
 
 type TailscalePeer struct {

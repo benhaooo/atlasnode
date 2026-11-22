@@ -34,7 +34,8 @@ interface RouteState {
 function normalizeServerTab(raw?: string): ServerTab {
   if (!raw) return 'overview';
   const cleaned = raw.toLowerCase();
-  if (cleaned === 'quality') return 'nodequality';
+  if (cleaned === 'quality') return 'network';
+  if (cleaned === 'system') return 'firewall';
   return VALID_SERVER_TABS.has(cleaned as ServerTab) ? (cleaned as ServerTab) : 'overview';
 }
 

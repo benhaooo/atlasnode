@@ -99,7 +99,33 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
         tab: 'firewall',
       });
     }
+    if (s.networkSummary?.grade === 'poor') {
+      alerts.push({
+        serverId: s.server.id,
+        serverName: s.server.name,
+        message: `线路异常（丢包 ${s.networkSummary.maxLossPct}% / 晚高峰波动大）`,
+        severity: 'danger',
+        tab: 'network',
+      });
+    }
   }
+
+  const netGradeMeta = (grade?: string) => {
+    switch (grade) {
+      case 'excellent':
+        return { label: '线路稳健', cls: 'bg-emerald-500/12 border-emerald-500/25 text-emerald-300' };
+      case 'good':
+        return { label: '线路平稳', cls: 'bg-sky-500/12 border-sky-400/25 text-sky-300' };
+      case 'degraded':
+        return { label: '高峰波动', cls: 'bg-amber-500/12 border-amber-400/25 text-amber-300' };
+      case 'poor':
+        return { label: '丢包炸线', cls: 'bg-rose-500/15 border-rose-500/30 text-rose-300' };
+      default:
+        return null;
+    }
+  };
+
+  const KEY_PROXY_SERVICES = ['chatgpt', 'openai', 'claude', 'gemini', 'netflix', 'youtube', 'disney+', 'tiktok'];
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-5 sm:py-7 space-y-5 sm:space-y-6">
@@ -197,8 +223,14 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
             }
             const stackList = Array.from(stacks.entries()).slice(0, 6);
 
-            const unlockedCount =
-              nq?.summary.unlocks.filter((u) => u.status === 'native' || u.status === 'unlocked').length || 0;
+            const keyUnlocks = (nq?.summary.unlocks || [])
+              .filter(
+                (u) =>
+                  (u.status === 'native' || u.status === 'unlocked' || u.status === 'dns') &&
+                  KEY_PROXY_SERVICES.includes(u.service.toLowerCase())
+              )
+              .slice(0, 4);
+            const netBadge = netGradeMeta(snap.networkSummary?.grade);
 
             return (
               <div
@@ -417,41 +449,80 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
                           ))}
                         </div>
 
-                        {/* NodeQuality Headline Strip */}
-                        <div
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onSelectServer(snap.server.id, 'nodequality');
-                          }}
-                          className="pt-2 border-t border-white/[0.06] flex items-center justify-between gap-2 group/nq"
-                        >
-                          {snap.activeNodeQualityJob ? (
-                            <div className="flex items-center gap-1.5 text-[11px] text-amber-300">
-                              <Activity className="w-3.5 h-3.5 animate-pulse" />
-                              <span className="truncate">{snap.activeNodeQualityJob.phase}</span>
-                            </div>
-                          ) : nq ? (
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-1.5 text-[11px]">
-                                <Zap className="w-3 h-3 text-emerald-400 shrink-0" />
-                                <span className="text-slate-200 font-medium truncate">
-                                  {countryFlag(nq.summary.ip.country)}{' '}
-                                  {nq.summary.ip.asn || 'NodeQuality'}{' '}
-                                  {nq.summary.ip.ipType ? `· ${nq.summary.ip.ipType}` : ''}
+                        {/* Proxy Quality & Line Stability Strip */}
+                        <div className="pt-2 border-t border-white/[0.06] space-y-2">
+                          {/* Live 24h Network Stability */}
+                          {netBadge && snap.networkSummary && (
+                            <div
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onSelectServer(snap.server.id, 'network');
+                              }}
+                              className="flex items-center justify-between gap-2 group/net"
+                            >
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border shrink-0 ${netBadge.cls}`}>
+                                  {netBadge.label}
+                                </span>
+                                <span className="text-[10px] font-mono text-slate-400 truncate">
+                                  丢包 {snap.networkSummary.maxLossPct}%
+                                  {snap.networkSummary.peakDeltaMs !== undefined
+                                    ? ` · 高峰 ${snap.networkSummary.peakDeltaMs >= 0 ? '+' : ''}${snap.networkSummary.peakDeltaMs}ms`
+                                    : ''}
                                 </span>
                               </div>
-                              <div className="text-[10px] text-slate-500 mt-0.5 font-mono">
-                                {unlockedCount > 0 ? `解锁 ${unlockedCount} 项 · ` : ''}
-                                {formatRelativeTime(nq.finishedAt || nq.startedAt)}
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-1.5 text-[11px] text-slate-400 group-hover/nq:text-sky-300">
-                              <Zap className="w-3 h-3" />
-                              <span>运行 NodeQuality 质检</span>
+                              <ArrowUpRight className="w-3 h-3 text-slate-600 group-hover/net:text-sky-300 shrink-0" />
                             </div>
                           )}
-                          <ArrowUpRight className="w-3.5 h-3.5 text-slate-500 group-hover/nq:text-sky-300 shrink-0" />
+
+                          {/* NodeQuality & Key Unlocks */}
+                          <div
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onSelectServer(snap.server.id, 'nodequality');
+                            }}
+                            className="flex items-start justify-between gap-2 group/nq"
+                          >
+                            {snap.activeNodeQualityJob ? (
+                              <div className="flex items-center gap-1.5 text-[11px] text-amber-300">
+                                <Activity className="w-3.5 h-3.5 animate-pulse shrink-0" />
+                                <span className="truncate">{snap.activeNodeQualityJob.phase}</span>
+                              </div>
+                            ) : nq ? (
+                              <div className="min-w-0 space-y-1.5">
+                                <div className="flex items-center gap-1.5 text-[11px]">
+                                  <Zap className="w-3 h-3 text-emerald-400 shrink-0" />
+                                  <span className="text-slate-200 font-medium truncate">
+                                    {countryFlag(nq.summary.ip.country)}{' '}
+                                    {nq.summary.ip.asn || 'NodeQuality'}{' '}
+                                    {nq.summary.ip.ipType ? `· ${nq.summary.ip.ipType}` : ''}
+                                  </span>
+                                </div>
+                                {keyUnlocks.length > 0 ? (
+                                  <div className="flex flex-wrap gap-1">
+                                    {keyUnlocks.map((u) => (
+                                      <span
+                                        key={u.service}
+                                        className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-300"
+                                      >
+                                        {countryFlag(u.region)} {u.service}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <div className="text-[10px] text-slate-500 font-mono">
+                                    {formatRelativeTime(nq.finishedAt || nq.startedAt)}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1.5 text-[11px] text-slate-400 group-hover/nq:text-sky-300">
+                                <Zap className="w-3 h-3" />
+                                <span>运行 NodeQuality 质检</span>
+                              </div>
+                            )}
+                            <ArrowUpRight className="w-3.5 h-3.5 text-slate-500 group-hover/nq:text-sky-300 shrink-0 mt-0.5" />
+                          </div>
                         </div>
                       </>
                     ) : (

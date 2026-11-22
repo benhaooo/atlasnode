@@ -928,6 +928,7 @@ func collectServerSnapshot(srv ServerConfig, activeJob *ActiveNQJobInfo) ServerS
 		DetectedLinks:        detectAutoLinks(srv, containers, enrichedPorts),
 		LatestNodeQuality:    latestSummary,
 		ActiveNodeQualityJob: activeJob,
+		NetworkSummary:       getServerNetworkBrief(srv.ID),
 		CollectedAt:          nowStr,
 	}
 }

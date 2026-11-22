@@ -52,17 +52,38 @@ interface ServerDetailProps {
   onServerDeleted: () => void;
 }
 
-const TABS: { id: ServerTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { id: 'overview', label: '概览', icon: LayoutDashboard },
-  { id: 'services', label: '容器与服务', icon: Box },
-  { id: 'network', label: '网络与线路', icon: Network },
+type PrimaryGroup = 'overview' | 'services' | 'quality' | 'system';
+
+const PRIMARY_TABS: {
+  id: PrimaryGroup;
+  defaultTab: ServerTab;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+}[] = [
+  { id: 'overview', defaultTab: 'overview', label: '概览', icon: LayoutDashboard },
+  { id: 'services', defaultTab: 'services', label: '容器与服务', icon: Box },
+  { id: 'quality', defaultTab: 'network', label: '线路与质检', icon: Zap },
+  { id: 'system', defaultTab: 'firewall', label: '安全与系统', icon: Shield },
+];
+
+const QUALITY_SUBTABS: { id: ServerTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { id: 'network', label: '实时线路监控', icon: Network },
   { id: 'nodequality', label: 'NodeQuality 质检', icon: Zap },
+];
+
+const SYSTEM_SUBTABS: { id: ServerTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: 'firewall', label: '防火墙与端口', icon: Shield },
   { id: 'assets', label: '磁盘与资产', icon: HardDrive },
-  { id: 'files', label: '文件管理', icon: FolderOpen },
-  { id: 'terminal', label: '网页终端', icon: Terminal },
   { id: 'keys', label: 'SSH 公钥', icon: KeyRound },
 ];
+
+function getPrimaryGroup(tab: ServerTab): PrimaryGroup | null {
+  if (tab === 'overview') return 'overview';
+  if (tab === 'services') return 'services';
+  if (tab === 'network' || tab === 'nodequality') return 'quality';
+  if (tab === 'firewall' || tab === 'assets' || tab === 'keys') return 'system';
+  return null; // files / terminal are utility tools
+}
 
 export const ServerDetail: React.FC<ServerDetailProps> = ({
   snapshot,
@@ -198,10 +219,16 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
   };
 
   const sshCmd = `ssh ${snapshot.server.username}@${snapshot.tailscaleIp || snapshot.publicIp || snapshot.server.host}${snapshot.server.port !== 22 ? ` -p ${snapshot.server.port}` : ''}`;
+  const activeGroup = getPrimaryGroup(activeTab);
+  const netGrade = snapshot.networkSummary?.grade;
+  const hasSystemWarn =
+    snapshot.online &&
+    ((snapshot.metrics?.diskRootPercent ?? 0) >= 85 ||
+      (!snapshot.firewallSummary.active && snapshot.firewallSummary.publicPortsCount > 2));
 
   return (
     <div className="min-h-dvh flex flex-col">
-      {/* Server Identity Bar (scrolls away on mobile to save vertical space, sticky with tabs on lg+) */}
+      {/* Server Identity Bar (scrolls away on mobile to save vertical space) */}
       <div className="bg-[#090b10] border-b border-white/[0.04] lg:border-b-0">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-3 sm:pt-4 pb-3 sm:pb-3.5">
           {/* Identity Row */}
@@ -266,13 +293,39 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
               </div>
             </div>
 
-            <div className="flex items-center gap-2 flex-wrap shrink-0">
+            {/* Right Utility & Action Toolbar */}
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap shrink-0">
+              <button
+                onClick={() => switchTab(activeTab === 'files' ? 'overview' : 'files')}
+                title="文件管理（应急工具）"
+                className={`flex items-center gap-1.5 text-xs px-2.5 sm:px-3 py-1.5 rounded-lg border transition-colors cursor-pointer ${
+                  activeTab === 'files'
+                    ? 'bg-sky-500/20 border-sky-400/40 text-sky-200 font-medium'
+                    : 'bg-white/[0.04] hover:bg-white/[0.08] border-white/[0.08] text-slate-200'
+                }`}
+              >
+                <FolderOpen className="w-3.5 h-3.5 text-amber-400/90" />
+                <span>文件</span>
+              </button>
+              <button
+                onClick={() => switchTab(activeTab === 'terminal' ? 'overview' : 'terminal')}
+                title="网页终端（应急工具）"
+                className={`flex items-center gap-1.5 text-xs px-2.5 sm:px-3 py-1.5 rounded-lg border transition-colors cursor-pointer ${
+                  activeTab === 'terminal'
+                    ? 'bg-sky-500/20 border-sky-400/40 text-sky-200 font-medium'
+                    : 'bg-white/[0.04] hover:bg-white/[0.08] border-white/[0.08] text-slate-200'
+                }`}
+              >
+                <Terminal className="w-3.5 h-3.5 text-emerald-400" />
+                <span>终端</span>
+              </button>
               <button
                 onClick={() => handleCopy('ssh', sshCmd)}
-                className="flex items-center gap-1.5 text-xs font-mono bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                title={`复制 SSH 命令: ${sshCmd}`}
+                className="flex items-center gap-1.5 text-xs font-mono bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] text-slate-200 px-2.5 sm:px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
               >
-                {copied === 'ssh' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Terminal className="w-3.5 h-3.5 text-sky-400" />}
-                <span>{copied === 'ssh' ? '已复制 SSH' : '复制 SSH'}</span>
+                {copied === 'ssh' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-sky-400" />}
+                <span>{copied === 'ssh' ? '已复制' : 'SSH'}</span>
               </button>
               <button
                 onClick={() => setEditingMeta(true)}
@@ -302,32 +355,46 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
         </div>
       </div>
 
-      {/* Persistent Workspace Tabs */}
+      {/* Persistent Primary Workspace Tabs (4 high-signal domains) */}
       <header className="sticky top-12 lg:top-0 z-20 bg-[#090b10]/95 backdrop-blur-md border-b border-white/[0.06]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
           <nav className="flex items-center gap-0.5 sm:gap-1 overflow-x-auto no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0 -mb-px">
-            {TABS.map((t) => {
-              const Icon = t.icon;
-              const isActive = activeTab === t.id;
+            {PRIMARY_TABS.map((g) => {
+              const Icon = g.icon;
+              const isActive = activeGroup === g.id;
               return (
                 <button
-                  key={t.id}
-                  onClick={() => switchTab(t.id)}
-                  className={`flex items-center gap-1.5 px-3 sm:px-3.5 py-2.5 text-xs font-medium border-b-2 whitespace-nowrap transition-colors cursor-pointer shrink-0 ${
+                  key={g.id}
+                  onClick={() => switchTab(g.defaultTab)}
+                  className={`flex items-center gap-1.5 px-3 sm:px-4 py-2.5 text-xs font-medium border-b-2 whitespace-nowrap transition-colors cursor-pointer shrink-0 ${
                     isActive
                       ? 'border-sky-400 text-sky-300'
                       : 'border-transparent text-slate-400 hover:text-slate-200 hover:border-white/15'
                   }`}
                 >
                   <Icon className="w-3.5 h-3.5" />
-                  <span>{t.label}</span>
-                  {t.id === 'services' && snapshot.dockerSummary.running > 0 && (
+                  <span>{g.label}</span>
+                  {g.id === 'services' && snapshot.dockerSummary.running > 0 && (
                     <span className="ml-0.5 text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-white/[0.06] text-slate-300">
                       {snapshot.dockerSummary.running}
                     </span>
                   )}
-                  {t.id === 'nodequality' && snapshot.activeNodeQualityJob && (
+                  {g.id === 'quality' && snapshot.activeNodeQualityJob && (
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                  )}
+                  {g.id === 'quality' && !snapshot.activeNodeQualityJob && netGrade && netGrade !== 'collecting' && (
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        netGrade === 'excellent' || netGrade === 'good'
+                          ? 'bg-emerald-400'
+                          : netGrade === 'degraded'
+                            ? 'bg-amber-400'
+                            : 'bg-rose-400'
+                      }`}
+                    />
+                  )}
+                  {g.id === 'system' && hasSystemWarn && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
                   )}
                 </button>
               );
@@ -337,7 +404,83 @@ export const ServerDetail: React.FC<ServerDetailProps> = ({
       </header>
 
       {/* Main Workspace Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-4 sm:py-6">
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-4 sm:py-6 space-y-4">
+        {/* Contextual Sub-Tab Switcher for grouped domains */}
+        {activeGroup === 'quality' && (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="inline-flex items-center bg-[#0f131b] border border-white/[0.08] rounded-xl p-1 text-xs">
+              {QUALITY_SUBTABS.map((sub) => {
+                const SubIcon = sub.icon;
+                const active = activeTab === sub.id;
+                return (
+                  <button
+                    key={sub.id}
+                    onClick={() => switchTab(sub.id)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
+                      active ? 'bg-sky-500/20 text-sky-300' : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <SubIcon className="w-3.5 h-3.5" />
+                    <span>{sub.label}</span>
+                    {sub.id === 'nodequality' && snapshot.activeNodeQualityJob && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            <span className="text-[11px] text-slate-500 hidden sm:inline">
+              实时监测晚高峰波动 · NodeQuality 存档 IP 纯净度与流媒体/AI 解锁
+            </span>
+          </div>
+        )}
+
+        {activeGroup === 'system' && (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="inline-flex flex-wrap items-center bg-[#0f131b] border border-white/[0.08] rounded-xl p-1 text-xs">
+              {SYSTEM_SUBTABS.map((sub) => {
+                const SubIcon = sub.icon;
+                const active = activeTab === sub.id;
+                return (
+                  <button
+                    key={sub.id}
+                    onClick={() => switchTab(sub.id)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
+                      active ? 'bg-sky-500/20 text-sky-300' : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <SubIcon className="w-3.5 h-3.5" />
+                    <span>{sub.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <span className="text-[11px] text-slate-500 hidden sm:inline">
+              检查公网暴露面、硬盘占用归因、定时任务与授权 SSH 公钥
+            </span>
+          </div>
+        )}
+
+        {(activeTab === 'files' || activeTab === 'terminal') && (
+          <div className="flex items-center justify-between gap-2 bg-[#0f131b] border border-white/[0.07] rounded-xl px-3.5 py-2 text-xs">
+            <div className="flex items-center gap-2 text-slate-300">
+              {activeTab === 'files' ? (
+                <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
+              ) : (
+                <Terminal className="w-3.5 h-3.5 text-emerald-400" />
+              )}
+              <span className="font-medium">
+                {activeTab === 'files' ? '应急工具 · 远端文件管理' : '应急工具 · 网页 SSH 终端'}
+              </span>
+            </div>
+            <button
+              onClick={() => switchTab('overview')}
+              className="text-[11px] text-sky-400 hover:text-sky-300 cursor-pointer"
+            >
+              返回概览
+            </button>
+          </div>
+        )}
         {!snapshot.online && activeTab !== 'nodequality' ? (
           <div className="bg-rose-500/10 border border-rose-500/25 rounded-2xl p-6 text-sm text-rose-200">
             <div className="font-semibold mb-1">当前无法连接到该服务器</div>

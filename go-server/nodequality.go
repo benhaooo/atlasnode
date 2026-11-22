@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -470,6 +471,9 @@ func runNodeQualityWorker(srv ServerConfig, job *activeNQJob, saveDir string) {
 		runCopy := job.run
 		job.mu.Unlock()
 		_ = saveNodeQualityRun(runCopy)
+		if runCopy.Status == "completed" {
+			go checkNodeQualityDegradation(srv, runCopy)
+		}
 		emitNQJob(job, "done", map[string]any{"status": runCopy.Status, "runId": runCopy.ID})
 	}
 
@@ -485,6 +489,188 @@ func tailString(s string, maxLen int) string {
 		return s
 	}
 	return s[len(s)-maxLen:]
+}
+
+var autoNQOnce sync.Once
+
+func defaultAutoNQConfig() AutoNQConfig {
+	return AutoNQConfig{
+		Enabled:        false,
+		IntervalDays:   7,
+		Mode:           "fast",
+		AlertOnDegrade: true,
+	}
+}
+
+func loadAutoNQConfig() AutoNQConfig {
+	cfg := defaultAutoNQConfig()
+	readJSON(filepath.Join(getDataDir(), "nq-schedule.json"), &cfg)
+	if cfg.IntervalDays <= 0 {
+		cfg.IntervalDays = 7
+	}
+	if cfg.Mode == "" {
+		cfg.Mode = "fast"
+	}
+	return cfg
+}
+
+func saveAutoNQConfig(cfg AutoNQConfig) error {
+	if cfg.IntervalDays < 1 {
+		cfg.IntervalDays = 7
+	}
+	if cfg.Mode != "fast" && cfg.Mode != "full" && cfg.Mode != "ip_hw" && cfg.Mode != "net" {
+		cfg.Mode = "fast"
+	}
+	return writeJSONAtomic(filepath.Join(getDataDir(), "nq-schedule.json"), cfg)
+}
+
+func riskRank(level string) int {
+	switch level {
+	case "low":
+		return 1
+	case "medium":
+		return 2
+	case "high":
+		return 3
+	default:
+		return 0
+	}
+}
+
+func isUnlockUsable(status string) bool {
+	return status == "native" || status == "unlocked" || status == "dns"
+}
+
+func checkNodeQualityDegradation(srv ServerConfig, current NodeQualityRun) {
+	autoCfg := loadAutoNQConfig()
+	if !autoCfg.AlertOnDegrade {
+		return
+	}
+	alertCfg := loadAlertConfig()
+	hasChannel := (alertCfg.Telegram.Enabled && alertCfg.Telegram.BotToken != "" && alertCfg.Telegram.ChatID != "") ||
+		(alertCfg.Webhook.Enabled && alertCfg.Webhook.URL != "") ||
+		(alertCfg.Bark.Enabled && alertCfg.Bark.URL != "")
+	if !hasChannel {
+		return
+	}
+
+	runs := listNodeQualityRuns(srv.ID)
+	var prev *NodeQualityRun
+	for i := range runs {
+		if runs[i].ID == current.ID || runs[i].Status != "completed" {
+			continue
+		}
+		cp := runs[i]
+		prev = &cp
+		break
+	}
+	if prev == nil {
+		return
+	}
+
+	reasons := []string{}
+	curRisk := riskRank(current.Summary.IP.RiskLevel)
+	prevRisk := riskRank(prev.Summary.IP.RiskLevel)
+	if curRisk > 0 && prevRisk > 0 && curRisk > prevRisk {
+		reasons = append(reasons, fmt.Sprintf("IP 风控等级上升：%s → %s", prev.Summary.IP.RiskLevel, current.Summary.IP.RiskLevel))
+	}
+
+	if current.Summary.IP.BlacklistHit != nil && prev.Summary.IP.BlacklistHit != nil && *current.Summary.IP.BlacklistHit > *prev.Summary.IP.BlacklistHit {
+		reasons = append(reasons, fmt.Sprintf("黑名单命中增加：%d → %d", *prev.Summary.IP.BlacklistHit, *current.Summary.IP.BlacklistHit))
+	}
+
+	keyServices := map[string]bool{
+		"chatgpt": true, "openai": true, "claude": true, "gemini": true,
+		"netflix": true, "youtube": true, "disney+": true, "tiktok": true,
+	}
+	prevMap := map[string]string{}
+	for _, u := range prev.Summary.Unlocks {
+		prevMap[strings.ToLower(strings.TrimSpace(u.Service))] = u.Status
+	}
+	dropped := []string{}
+	for _, u := range current.Summary.Unlocks {
+		k := strings.ToLower(strings.TrimSpace(u.Service))
+		if !keyServices[k] {
+			continue
+		}
+		if ps, ok := prevMap[k]; ok && isUnlockUsable(ps) && u.Status == "blocked" {
+			dropped = append(dropped, u.Service)
+		}
+	}
+	if len(dropped) > 0 {
+		reasons = append(reasons, "核心解锁失效："+strings.Join(dropped, "、"))
+	}
+
+	if len(reasons) == 0 {
+		return
+	}
+
+	msg := fmt.Sprintf("节点 [%s] NodeQuality 复测发现质量下降：%s", srv.Name, strings.Join(reasons, "；"))
+	delivered, _ := deliverAlert(alertCfg, "⚠️ AtlasNode 节点质检降级 · "+srv.Name, msg)
+	appendAlertHistory(AlertEvent{
+		ID:         fmt.Sprintf("al_%d_%s", time.Now().UnixMilli(), randomHex(2)),
+		TS:         time.Now().UTC().Format(time.RFC3339),
+		ServerID:   srv.ID,
+		ServerName: srv.Name,
+		Kind:       "nodequality",
+		Message:    msg,
+		Delivered:  delivered,
+	})
+}
+
+func startAutoNodeQualityScheduler() {
+	autoNQOnce.Do(func() {
+		go func() {
+			time.Sleep(2 * time.Minute)
+			ticker := time.NewTicker(30 * time.Minute)
+			defer ticker.Stop()
+			check := func() {
+				cfg := loadAutoNQConfig()
+				if !cfg.Enabled || cfg.IntervalDays <= 0 {
+					return
+				}
+				due := time.Duration(cfg.IntervalDays) * 24 * time.Hour
+				for _, srv := range loadServers() {
+					// Re-check enabled in case user turned it off mid-cycle
+					if !loadAutoNQConfig().Enabled {
+						return
+					}
+					if getActiveNodeQualityJob(srv.ID) != nil {
+						continue
+					}
+					latest := getLatestNodeQualityRun(srv.ID)
+					needsRun := true
+					if latest != nil {
+						tsStr := latest.FinishedAt
+						if tsStr == "" {
+							tsStr = latest.StartedAt
+						}
+						if t, err := time.Parse(time.RFC3339, tsStr); err == nil && time.Since(t) < due {
+							needsRun = false
+						}
+					}
+					if !needsRun {
+						continue
+					}
+					if _, err := startNodeQualityJob(srv, cfg.Mode); err != nil {
+						continue
+					}
+					// Wait sequentially so we only run 1 NodeQuality test across the fleet at a time
+					deadline := time.Now().Add(12 * time.Minute)
+					for time.Now().Before(deadline) {
+						time.Sleep(5 * time.Second)
+						if getActiveNodeQualityJob(srv.ID) == nil {
+							break
+						}
+					}
+				}
+			}
+			check()
+			for range ticker.C {
+				check()
+			}
+		}()
+	})
 }
 
 const fetchRemoteResultsPy = `

@@ -308,7 +308,7 @@ export const ServerDetailSkeleton: React.FC = () => (
           </div>
         </div>
         <div className="flex items-center gap-2 pb-2.5 overflow-hidden">
-          {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+          {[0, 1, 2, 3].map((i) => (
             <Sk key={i} className="h-6 w-20 shrink-0 rounded-md bg-white/[0.05]" />
           ))}
         </div>

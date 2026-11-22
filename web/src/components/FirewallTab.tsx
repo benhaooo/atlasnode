@@ -231,6 +231,7 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
   const [cachedAt, setCachedAt] = useState<string | undefined>(cachedInit?.cachedAt);
   const [loading, setLoading] = useState(!cachedInit);
   const [error, setError] = useState('');
+  const [showPrivatePorts, setShowPrivatePorts] = useState(true);
   const [showLocalPorts, setShowLocalPorts] = useState(false);
   const [showRawIptables, setShowRawIptables] = useState(false);
   const [portFilter, setPortFilter] = useState<'all' | 'exposed' | 'blocked'>('all');
@@ -373,9 +374,38 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
     () => data?.listeningPorts.filter((p) => p.scope === 'public') || [],
     [data]
   );
-  const tailscalePorts = data?.listeningPorts.filter((p) => p.scope === 'tailscale') || [];
-  const privatePorts = data?.listeningPorts.filter((p) => p.scope === 'private') || [];
+  const tailscalePorts = useMemo(
+    () => data?.listeningPorts.filter((p) => p.scope === 'tailscale') || [],
+    [data]
+  );
+  const privatePorts = useMemo(
+    () => data?.listeningPorts.filter((p) => p.scope === 'private') || [],
+    [data]
+  );
   const localPorts = data?.listeningPorts.filter((p) => p.scope === 'local') || [];
+
+  const internalPorts = useMemo(() => {
+    const merged = new Map<string, ListeningPort & { protos: string[] }>();
+    for (const p of [...tailscalePorts, ...privatePorts]) {
+      const proc = p.dockerContainer || p.process || 'unknown';
+      const key = `${p.scope}|${p.address}|${p.port}|${proc}`;
+      const protoLabel = (normProto(p.proto) || p.proto || '').toUpperCase();
+      const existing = merged.get(key);
+      if (existing) {
+        if (protoLabel && !existing.protos.includes(protoLabel)) {
+          existing.protos.push(protoLabel);
+          existing.protos.sort();
+        }
+      } else {
+        merged.set(key, { ...p, protos: protoLabel ? [protoLabel] : [] });
+      }
+    }
+    return Array.from(merged.values()).sort((a, b) => {
+      if (a.scope !== b.scope) return a.scope === 'tailscale' ? -1 : 1;
+      if (a.port !== b.port) return a.port - b.port;
+      return a.address.localeCompare(b.address);
+    });
+  }, [tailscalePorts, privatePorts]);
 
   const isNftView =
     data?.engine === 'nftables' || (Boolean(data?.nftRules?.length) && data?.engine !== 'ufw');
@@ -656,22 +686,84 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
           </div>
 
           {/* Tailscale & Private Ports */}
-          {(tailscalePorts.length > 0 || privatePorts.length > 0) && (
+          {internalPorts.length > 0 && (
             <div className="pt-3 border-t border-white/[0.06] space-y-2">
-              <div className="text-[11px] font-semibold uppercase tracking-wider text-sky-300 flex items-center gap-1.5">
-                <Radio className="w-3 h-3" />
-                Tailscale / 内网接口监听 ({tailscalePorts.length + privatePorts.length})
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowPrivatePorts(!showPrivatePorts)}
+                  className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-sky-300 hover:text-sky-200 transition-colors cursor-pointer"
+                >
+                  {showPrivatePorts ? (
+                    <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                  ) : (
+                    <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                  )}
+                  <Radio className="w-3 h-3" />
+                  <span>Tailscale / 内网接口监听 · {internalPorts.length}</span>
+                </button>
+                <div className="flex items-center gap-1.5 text-[10px] font-mono">
+                  {tailscalePorts.length > 0 && (
+                    <span className="px-1.5 py-0.5 rounded bg-sky-500/10 border border-sky-400/20 text-sky-300">
+                      Tailscale {internalPorts.filter((p) => p.scope === 'tailscale').length}
+                    </span>
+                  )}
+                  {privatePorts.length > 0 && (
+                    <span className="px-1.5 py-0.5 rounded bg-white/[0.04] border border-white/[0.07] text-slate-400">
+                      内网 {internalPorts.filter((p) => p.scope === 'private').length}
+                    </span>
+                  )}
+                </div>
               </div>
-              <div className="flex flex-wrap gap-1.5">
-                {[...tailscalePorts, ...privatePorts].map((p, i) => (
-                  <span
-                    key={i}
-                    className="text-[11px] font-mono bg-sky-500/[0.07] border border-sky-400/20 text-sky-200 px-2.5 py-1 rounded-lg"
-                  >
-                    {p.address}:{p.port} ({p.proto} · {p.process})
-                  </span>
-                ))}
-              </div>
+
+              {showPrivatePorts && (
+                <div className="space-y-1.5">
+                  {internalPorts.map((p) => {
+                    const isTs = p.scope === 'tailscale';
+                    return (
+                      <div
+                        key={`${p.scope}-${p.address}-${p.port}-${p.dockerContainer || p.process}`}
+                        className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 rounded-xl px-3.5 py-2 text-xs bg-[#090b10] border border-white/[0.05]"
+                      >
+                        <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+                          <span
+                            className={`font-mono font-semibold w-14 sm:w-16 shrink-0 ${
+                              isTs ? 'text-sky-300' : 'text-slate-200'
+                            }`}
+                          >
+                            :{p.port}
+                          </span>
+                          <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-white/[0.05] text-slate-400 shrink-0">
+                            {p.protos.join('/') || p.proto}
+                          </span>
+                          <span className="font-mono text-slate-200 truncate">
+                            {p.dockerContainer ? (
+                              <span className="inline-flex items-center gap-1 text-sky-300">
+                                <Box className="w-3 h-3" />
+                                {p.dockerContainer}
+                              </span>
+                            ) : (
+                              p.process
+                            )}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-[11px] font-mono text-slate-400">{p.address}</span>
+                          <span
+                            className={`text-[10px] font-mono px-1.5 py-0.5 rounded-md border ${
+                              isTs
+                                ? 'bg-sky-500/10 border-sky-400/25 text-sky-300'
+                                : 'bg-white/[0.04] border-white/[0.08] text-slate-400'
+                            }`}
+                          >
+                            {isTs ? 'Tailscale' : '内网'}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 

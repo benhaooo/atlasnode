@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   ChevronDown,
@@ -11,13 +11,214 @@ import {
   Shield,
   ShieldAlert,
   ShieldCheck,
+  ShieldOff,
   Trash2,
 } from 'lucide-react';
 import { api } from '../api';
 import { getTabCache, setTabCache } from '../tabCache';
-import type { FirewallData, ServerSnapshot } from '../types';
+import type { FirewallData, ListeningPort, NftRule, ServerSnapshot, UfwRule } from '../types';
 import { formatRelativeTime } from '../utils';
 import { FirewallSkeleton } from './Skeleton';
+
+type PortFwStatus = 'blocked' | 'allowed' | 'restricted' | 'docker_bypass' | 'unprotected';
+
+interface PortFwVerdict {
+  status: PortFwStatus;
+  label: string;
+  detail: string;
+  matchedRuleKey?: string;
+}
+
+const SERVICE_PORT_MAP: Record<string, number[]> = {
+  openssh: [22],
+  ssh: [22],
+  http: [80],
+  www: [80],
+  https: [443],
+  'nginx http': [80],
+  'nginx https': [443],
+  'nginx full': [80, 443],
+  'apache': [80],
+  'apache secure': [443],
+  'apache full': [80, 443],
+  dns: [53],
+  domain: [53],
+};
+
+function normProto(p?: string): 'tcp' | 'udp' | '' {
+  const s = (p || '').toLowerCase().trim();
+  if (s.startsWith('tcp')) return 'tcp';
+  if (s.startsWith('udp')) return 'udp';
+  return '';
+}
+
+function matchPortSpec(port: number, spec: string): boolean {
+  const cleaned = spec.replace(/[{}]/g, '').trim().toLowerCase();
+  if (!cleaned) return false;
+  if (SERVICE_PORT_MAP[cleaned]) {
+    return SERVICE_PORT_MAP[cleaned].includes(port);
+  }
+  for (const part of cleaned.split(',')) {
+    const token = part.trim();
+    if (!token) continue;
+    if (SERVICE_PORT_MAP[token]) {
+      if (SERVICE_PORT_MAP[token].includes(port)) return true;
+      continue;
+    }
+    const rangeMatch = token.match(/^(\d+)[:-](\d+)$/);
+    if (rangeMatch) {
+      const lo = Number(rangeMatch[1]);
+      const hi = Number(rangeMatch[2]);
+      if (port >= lo && port <= hi) return true;
+      continue;
+    }
+    if (/^\d+$/.test(token) && Number(token) === port) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function matchUfwRule(p: ListeningPort, r: UfwRule): boolean {
+  const cleaned = r.to.replace(/\(v6\)/gi, '').trim();
+  if (/^anywhere$/i.test(cleaned)) return true;
+  const protoMatch = cleaned.match(/\/(tcp|udp)$/i);
+  const ruleProto = protoMatch ? protoMatch[1].toLowerCase() : '';
+  const portProto = normProto(p.proto);
+  if (ruleProto && portProto && ruleProto !== portProto) return false;
+  const portPart = protoMatch ? cleaned.slice(0, -protoMatch[0].length).trim() : cleaned;
+  return matchPortSpec(p.port, portPart);
+}
+
+function matchNftRule(p: ListeningPort, r: NftRule): boolean {
+  const portProto = normProto(p.proto);
+  const ruleProto = normProto(r.proto);
+  if (ruleProto && portProto && ruleProto !== portProto) return false;
+  if (r.ports && matchPortSpec(p.port, r.ports)) return true;
+  const rawMatch = r.raw.match(/\b(tcp|udp)\s+dport\s+(\{[^}]+\}|[\d,-]+)/i);
+  if (rawMatch) {
+    if (portProto && rawMatch[1].toLowerCase() !== portProto) return false;
+    return matchPortSpec(p.port, rawMatch[2]);
+  }
+  return false;
+}
+
+function evaluatePortFirewall(p: ListeningPort, fw: FirewallData | null): PortFwVerdict {
+  if (!fw || !fw.active) {
+    return {
+      status: 'unprotected',
+      label: '防火墙未启',
+      detail: '本机防火墙未启用，外部能否连通取决于云厂商安全组',
+    };
+  }
+
+  const isDocker = Boolean(p.dockerContainer || p.process === 'docker-proxy');
+  const isNft = fw.engine === 'nftables' || (fw.nftRules && fw.nftRules.length > 0 && fw.engine !== 'ufw');
+  const defaultDrops = /deny|drop|reject/i.test(fw.defaultIncoming || '');
+
+  if (isNft) {
+    for (const r of fw.nftRules || []) {
+      if (!matchNftRule(p, r)) continue;
+      const key = `nft-${r.handle}`;
+      if (r.action === 'ACCEPT') {
+        const restricted = /\b(ip6?\s+saddr|iifname)\b/i.test(r.raw) && !/\biifname\s+!=\s*"lo"/i.test(r.raw);
+        if (restricted) {
+          return {
+            status: 'restricted',
+            label: `限源放行 #${r.handle}`,
+            detail: `命中 nftables 规则 #${r.handle}（限定来源/网卡）`,
+            matchedRuleKey: key,
+          };
+        }
+        return {
+          status: 'allowed',
+          label: `已放行 #${r.handle}`,
+          detail: `命中 nftables 入站放行规则 #${r.handle}`,
+          matchedRuleKey: key,
+        };
+      }
+      if (r.action === 'DROP' || r.action === 'REJECT') {
+        return {
+          status: 'blocked',
+          label: `已拦截 #${r.handle}`,
+          detail: `命中 nftables 拦截规则 #${r.handle}`,
+          matchedRuleKey: key,
+        };
+      }
+    }
+    if (isDocker) {
+      return {
+        status: 'docker_bypass',
+        label: 'Docker 转发',
+        detail: 'Docker 映射走内核 FORWARD/DOCKER 链，可能绕过入站 input 拦截，请核对云安全组',
+      };
+    }
+    if (defaultDrops) {
+      return {
+        status: 'blocked',
+        label: '已拦截',
+        detail: '未命中任何放行规则，已被 nftables 默认入站策略丢弃',
+      };
+    }
+    return {
+      status: 'unprotected',
+      label: '默认放行',
+      detail: '未命中拦截规则且默认入站策略为放行',
+    };
+  }
+
+  // UFW mode
+  if (isDocker) {
+    return {
+      status: 'docker_bypass',
+      label: 'Docker 绕过 UFW',
+      detail: 'Docker 映射默认直接写 iptables 绕过 UFW，不受 UFW 拦截，请通过云安全组控制',
+    };
+  }
+
+  for (const r of fw.ufwRules || []) {
+    if (!matchUfwRule(p, r)) continue;
+    const key = `ufw-${r.num}`;
+    if (r.action === 'ALLOW' || r.action === 'LIMIT') {
+      const isAny = /^anywhere/i.test(r.from.trim());
+      if (!isAny) {
+        return {
+          status: 'restricted',
+          label: `限源 ${r.from}`,
+          detail: `命中 UFW #${r.num}（仅允许来自 ${r.from}）`,
+          matchedRuleKey: key,
+        };
+      }
+      return {
+        status: 'allowed',
+        label: `已放行 #${r.num}`,
+        detail: `命中 UFW #${r.num}（${r.action} ${r.to}）`,
+        matchedRuleKey: key,
+      };
+    }
+    if (r.action === 'DENY' || r.action === 'REJECT') {
+      return {
+        status: 'blocked',
+        label: `已拦截 #${r.num}`,
+        detail: `命中 UFW #${r.num}（${r.action} ${r.to}）`,
+        matchedRuleKey: key,
+      };
+    }
+  }
+
+  if (defaultDrops) {
+    return {
+      status: 'blocked',
+      label: '已拦截',
+      detail: '未命中放行规则，已被 UFW 默认入站策略拦截',
+    };
+  }
+  return {
+    status: 'unprotected',
+    label: '默认放行',
+    detail: 'UFW 默认入站为放行',
+  };
+}
 
 interface FirewallTabProps {
   snapshot: ServerSnapshot;
@@ -32,6 +233,8 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
   const [error, setError] = useState('');
   const [showLocalPorts, setShowLocalPorts] = useState(false);
   const [showRawIptables, setShowRawIptables] = useState(false);
+  const [portFilter, setPortFilter] = useState<'all' | 'exposed' | 'blocked'>('all');
+  const [hoveredRuleKey, setHoveredRuleKey] = useState<string | null>(null);
   const [addingRule, setAddingRule] = useState(false);
   const [busy, setBusy] = useState(false);
   const [ruleForm, setRuleForm] = useState({
@@ -175,6 +378,79 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
   const privatePorts = data?.listeningPorts.filter((p) => p.scope === 'private') || [];
   const localPorts = data?.listeningPorts.filter((p) => p.scope === 'local') || [];
 
+  const isNftView =
+    data?.engine === 'nftables' || (Boolean(data?.nftRules?.length) && data?.engine !== 'ufw');
+
+  const evaluatedPublicPorts = useMemo(() => {
+    const order: Record<PortFwStatus, number> = {
+      docker_bypass: 0,
+      allowed: 1,
+      unprotected: 2,
+      restricted: 3,
+      blocked: 4,
+    };
+    return publicPorts
+      .map((port) => ({ port, verdict: evaluatePortFirewall(port, data) }))
+      .sort((a, b) => {
+        const diff = order[a.verdict.status] - order[b.verdict.status];
+        return diff !== 0 ? diff : a.port.port - b.port.port;
+      });
+  }, [publicPorts, data]);
+
+  const blockedCount = evaluatedPublicPorts.filter((x) => x.verdict.status === 'blocked').length;
+  const exposedCount = evaluatedPublicPorts.length - blockedCount;
+  const visiblePublicPorts = evaluatedPublicPorts.filter((x) => {
+    if (portFilter === 'blocked') return x.verdict.status === 'blocked';
+    if (portFilter === 'exposed') return x.verdict.status !== 'blocked';
+    return true;
+  });
+
+  // Map ruleKey -> list of matched port numbers so rules show live hit badges
+  const ruleMatchedPorts = useMemo(() => {
+    const mp = new Map<string, number[]>();
+    for (const item of evaluatedPublicPorts) {
+      const k = item.verdict.matchedRuleKey;
+      if (!k) continue;
+      const arr = mp.get(k) || [];
+      if (!arr.includes(item.port.port)) arr.push(item.port.port);
+      mp.set(k, arr);
+    }
+    return mp;
+  }, [evaluatedPublicPorts]);
+
+  const handleQuickAllowPort = (p: ListeningPort) => {
+    const proto = normProto(p.proto) || 'tcp';
+    const label = p.dockerContainer || p.process;
+    if (isNftView) {
+      setNftForm({ port: String(p.port), proto, comment: label !== 'unknown' ? label : '' });
+      setAddingNftRule(true);
+    } else if (data?.engine === 'ufw') {
+      setRuleForm({
+        port: String(p.port),
+        proto,
+        action: 'allow',
+        from: 'any',
+        comment: label !== 'unknown' ? label : '',
+      });
+      setAddingRule(true);
+    }
+  };
+
+  const verdictBadgeClass = (status: PortFwStatus) => {
+    switch (status) {
+      case 'blocked':
+        return 'bg-emerald-500/12 border-emerald-500/25 text-emerald-300';
+      case 'restricted':
+        return 'bg-sky-500/12 border-sky-400/25 text-sky-300';
+      case 'allowed':
+        return 'bg-amber-500/12 border-amber-400/30 text-amber-300';
+      case 'docker_bypass':
+        return 'bg-rose-500/12 border-rose-500/30 text-rose-300';
+      default:
+        return 'bg-white/[0.04] border-white/[0.08] text-slate-400';
+    }
+  };
+
   return (
     <div className="space-y-5">
       {/* TIER 1: Security Posture Banner */}
@@ -255,47 +531,124 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
 
       {/* TIER 2: Exposure-First Listening Ports */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-        {/* Publicly Exposed Ports (High Weight) */}
+        {/* Publicly Exposed Ports (High Weight) with Firewall Cross-Reference */}
         <section className="lg:col-span-7 bg-[#0f131b] border border-white/[0.07] rounded-2xl p-4 sm:p-5 space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-1.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
               <Globe className="w-3.5 h-3.5 shrink-0" />
-              公网暴露端口 (0.0.0.0 / ::) · {publicPorts.length}
+              公网监听端口 (0.0.0.0 / ::) · {publicPorts.length}
             </h3>
-            <span className="text-[10px] text-slate-500">外部网络可直接触达（受云安全组与防火墙约束）</span>
+            {data?.active && blockedCount > 0 ? (
+              <div className="inline-flex items-center bg-[#090b10] border border-white/[0.07] rounded-lg p-0.5 text-[10px] font-mono">
+                {(
+                  [
+                    ['all', `全部 ${publicPorts.length}`],
+                    ['exposed', `实际暴露 ${exposedCount}`],
+                    ['blocked', `已拦截 ${blockedCount}`],
+                  ] as const
+                ).map(([k, lbl]) => (
+                  <button
+                    key={k}
+                    onClick={() => setPortFilter(k)}
+                    className={`px-2 py-0.5 rounded-md transition-colors cursor-pointer ${
+                      portFilter === k
+                        ? 'bg-sky-500/20 text-sky-300 font-semibold'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <span className="text-[10px] text-slate-500">
+                {data?.active ? '悬停端口可高亮右侧命中规则' : '本机防火墙未启，仅靠云安全组约束'}
+              </span>
+            )}
           </div>
 
           <div className="space-y-1.5">
-            {publicPorts.map((p, idx) => (
-              <div
-                key={`${p.proto}-${p.port}-${idx}`}
-                className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 bg-[#090b10] border border-white/[0.06] rounded-xl px-3.5 py-2.5 text-xs"
-              >
-                <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
-                  <span className="font-mono font-semibold text-amber-300 w-14 sm:w-16 shrink-0">
-                    :{p.port}
-                  </span>
-                  <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-white/[0.05] text-slate-400">
-                    {p.proto}
-                  </span>
-                  <span className="font-mono text-slate-200 truncate">
-                    {p.dockerContainer ? (
-                      <span className="inline-flex items-center gap-1 text-sky-300">
-                        <Box className="w-3 h-3" />
-                        {p.dockerContainer}
-                      </span>
-                    ) : (
-                      p.process
+            {visiblePublicPorts.map(({ port: p, verdict }, idx) => {
+              const isLinkedHighlight =
+                Boolean(hoveredRuleKey && verdict.matchedRuleKey && hoveredRuleKey === verdict.matchedRuleKey);
+              const isBlocked = verdict.status === 'blocked';
+              const canQuickAllow =
+                isBlocked &&
+                data?.active &&
+                ((isNftView && Boolean(data?.nftTarget)) || (!isNftView && data?.engine === 'ufw'));
+              return (
+                <div
+                  key={`${p.proto}-${p.port}-${idx}`}
+                  onMouseEnter={() => {
+                    if (verdict.matchedRuleKey) setHoveredRuleKey(verdict.matchedRuleKey);
+                  }}
+                  onMouseLeave={() => setHoveredRuleKey(null)}
+                  className={`group flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 rounded-xl px-3.5 py-2.5 text-xs border transition-all ${
+                    isLinkedHighlight
+                      ? 'bg-sky-500/12 border-sky-400/50 shadow-sm'
+                      : isBlocked
+                        ? 'bg-[#090b10]/70 border-white/[0.04] opacity-75 hover:opacity-100'
+                        : 'bg-[#090b10] border-white/[0.06]'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 sm:gap-3 min-w-0">
+                    <span
+                      className={`font-mono font-semibold w-14 sm:w-16 shrink-0 ${
+                        isBlocked ? 'text-slate-400' : 'text-amber-300'
+                      }`}
+                    >
+                      :{p.port}
+                    </span>
+                    <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-white/[0.05] text-slate-400">
+                      {p.proto}
+                    </span>
+                    <span className="font-mono text-slate-200 truncate">
+                      {p.dockerContainer ? (
+                        <span className="inline-flex items-center gap-1 text-sky-300">
+                          <Box className="w-3 h-3" />
+                          {p.dockerContainer}
+                        </span>
+                      ) : (
+                        p.process
+                      )}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-[10px] font-mono text-slate-500 hidden sm:inline">
+                      {p.address}
+                    </span>
+                    <span
+                      title={verdict.detail}
+                      className={`inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-md border ${verdictBadgeClass(verdict.status)}`}
+                    >
+                      {verdict.status === 'blocked' ? (
+                        <ShieldCheck className="w-2.5 h-2.5" />
+                      ) : verdict.status === 'unprotected' ? (
+                        <ShieldOff className="w-2.5 h-2.5" />
+                      ) : (
+                        <Shield className="w-2.5 h-2.5" />
+                      )}
+                      <span>{verdict.label}</span>
+                    </span>
+                    {canQuickAllow && (
+                      <button
+                        type="button"
+                        onClick={() => handleQuickAllowPort(p)}
+                        title={`在右侧预填放行 :${p.port}/${normProto(p.proto) || 'tcp'}`}
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/12 hover:bg-sky-500/25 border border-sky-400/25 text-sky-300 transition-colors cursor-pointer"
+                      >
+                        放行
+                      </button>
                     )}
-                  </span>
+                  </div>
                 </div>
-                <span className="text-[11px] font-mono text-slate-500 shrink-0">
-                  {p.address} {p.pid ? `· PID ${p.pid}` : ''}
-                </span>
+              );
+            })}
+            {visiblePublicPorts.length === 0 && (
+              <div className="text-xs text-slate-500 py-4 text-center">
+                {publicPorts.length === 0 ? '无公网监听端口' : '当前筛选下无匹配端口'}
               </div>
-            ))}
-            {publicPorts.length === 0 && (
-              <div className="text-xs text-slate-500 py-4 text-center">无公网监听端口</div>
             )}
           </div>
 
@@ -437,13 +790,22 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
                   const displayLabel = r.ports
                     ? `${(r.proto || 'tcp').toUpperCase()} :${r.ports}`
                     : r.raw.replace(/# handle \d+/, '').trim();
+                  const ruleKey = `nft-${r.handle}`;
+                  const hitPorts = ruleMatchedPorts.get(ruleKey) || [];
+                  const isHighlighted = hoveredRuleKey === ruleKey;
                   return (
                     <div
                       key={`${r.table}-${r.chain}-${r.handle}`}
-                      className="flex items-center justify-between gap-2 bg-[#090b10] border border-white/[0.06] rounded-xl px-3 py-2 text-xs"
+                      onMouseEnter={() => setHoveredRuleKey(ruleKey)}
+                      onMouseLeave={() => setHoveredRuleKey(null)}
+                      className={`flex items-center justify-between gap-2 rounded-xl px-3 py-2 text-xs border transition-all ${
+                        isHighlighted
+                          ? 'bg-sky-500/12 border-sky-400/50 shadow-sm'
+                          : 'bg-[#090b10] border-white/[0.06]'
+                      }`}
                     >
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2 font-mono">
+                        <div className="flex items-center gap-2 font-mono flex-wrap">
                           <span className="text-[10px] text-slate-500">#{r.handle}</span>
                           <span
                             className={`text-[10px] font-semibold px-1.5 py-0.2 rounded ${
@@ -457,6 +819,11 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
                             {r.action}
                           </span>
                           <span className="text-white truncate">{displayLabel}</span>
+                          {hitPorts.length > 0 && (
+                            <span className="text-[9px] px-1.5 py-0.2 rounded bg-sky-500/15 text-sky-300 border border-sky-400/25">
+                              命中 {hitPorts.map((pt) => `:${pt}`).join(' ')}
+                            </span>
+                          )}
                         </div>
                         <div className="text-[10px] text-slate-500 mt-0.5 font-mono truncate">
                           {r.comment ? `${r.comment} · ` : ''}
@@ -575,41 +942,57 @@ export const FirewallTab: React.FC<FirewallTabProps> = ({ snapshot, onRefreshSna
 
               {data && data.ufwRules.length > 0 ? (
                 <div className="space-y-1.5 max-h-[420px] overflow-y-auto">
-                  {data.ufwRules.map((r) => (
-                    <div
-                      key={r.num}
-                      className="flex items-center justify-between gap-2 bg-[#090b10] border border-white/[0.06] rounded-xl px-3 py-2 text-xs"
-                    >
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 font-mono">
-                          <span className="text-[10px] text-slate-500">#{r.num}</span>
-                          <span
-                            className={`text-[10px] font-semibold px-1.5 py-0.2 rounded ${
-                              r.action === 'ALLOW'
-                                ? 'bg-emerald-500/15 text-emerald-300'
-                                : r.action === 'LIMIT'
-                                  ? 'bg-amber-500/15 text-amber-300'
-                                  : 'bg-rose-500/15 text-rose-300'
-                            }`}
-                          >
-                            {r.action}
-                          </span>
-                          <span className="text-white truncate">{r.to}</span>
-                        </div>
-                        <div className="text-[10px] text-slate-500 mt-0.5 font-mono truncate">
-                          From {r.from} {r.comment ? `· ${r.comment}` : ''}
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => handleDeleteRule(r.num, r.to)}
-                        disabled={busy}
-                        title="删除规则"
-                        className="p-1.5 text-slate-500 hover:text-rose-400 cursor-pointer shrink-0"
+                  {data.ufwRules.map((r) => {
+                    const ruleKey = `ufw-${r.num}`;
+                    const hitPorts = ruleMatchedPorts.get(ruleKey) || [];
+                    const isHighlighted = hoveredRuleKey === ruleKey;
+                    return (
+                      <div
+                        key={r.num}
+                        onMouseEnter={() => setHoveredRuleKey(ruleKey)}
+                        onMouseLeave={() => setHoveredRuleKey(null)}
+                        className={`flex items-center justify-between gap-2 rounded-xl px-3 py-2 text-xs border transition-all ${
+                          isHighlighted
+                            ? 'bg-sky-500/12 border-sky-400/50 shadow-sm'
+                            : 'bg-[#090b10] border-white/[0.06]'
+                        }`}
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))}
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 font-mono flex-wrap">
+                            <span className="text-[10px] text-slate-500">#{r.num}</span>
+                            <span
+                              className={`text-[10px] font-semibold px-1.5 py-0.2 rounded ${
+                                r.action === 'ALLOW'
+                                  ? 'bg-emerald-500/15 text-emerald-300'
+                                  : r.action === 'LIMIT'
+                                    ? 'bg-amber-500/15 text-amber-300'
+                                    : 'bg-rose-500/15 text-rose-300'
+                              }`}
+                            >
+                              {r.action}
+                            </span>
+                            <span className="text-white truncate">{r.to}</span>
+                            {hitPorts.length > 0 && (
+                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-sky-500/15 text-sky-300 border border-sky-400/25">
+                                命中 {hitPorts.map((pt) => `:${pt}`).join(' ')}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-slate-500 mt-0.5 font-mono truncate">
+                            From {r.from} {r.comment ? `· ${r.comment}` : ''}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleDeleteRule(r.num, r.to)}
+                          disabled={busy}
+                          title="删除规则"
+                          className="p-1.5 text-slate-500 hover:text-rose-400 cursor-pointer shrink-0"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="text-xs text-slate-500 bg-[#090b10] border border-dashed border-white/10 rounded-xl p-5 text-center">
